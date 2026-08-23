@@ -2,15 +2,18 @@ import type { PublicProduct } from '@shop/shared'
 import { formatPrice } from '@shop/shared'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import { Badge, Button } from '../components/ui'
 import { api } from '../lib/api'
+import { useCart } from '../lib/cart'
 import { useLang } from '../i18n'
 
 export function ProductPage() {
   const { slug } = useParams()
   const { t } = useTranslation()
   const lang = useLang()
+  const cart = useCart()
+  const navigate = useNavigate()
   const { data, error } = useQuery({
     queryKey: ['product', slug],
     queryFn: () => api<{ product: PublicProduct }>(`/api/products/${slug}`),
@@ -35,8 +38,7 @@ export function ProductPage() {
         <p className="mt-1 text-xl text-stone-600">{formatPrice(p.priceCents, lang)}</p>
         <Badge className="mt-2">{p.type === 'physical' ? t('product.shippedByMail') : t('product.deliveredByEmail')}</Badge>
         <p className="mt-4 whitespace-pre-line text-stone-700">{p.description[lang]}</p>
-        {/* Wired to useCart in Task 11 */}
-        <Button className="mt-6" disabled data-cart-pending>
+        <Button className="mt-6" disabled={p.stock === 0} onClick={() => { cart.add(p.slug); navigate('/cart') }}>
           {p.stock === 0 ? t('store.soldOut') : t('product.addToCart')}
         </Button>
       </div>
