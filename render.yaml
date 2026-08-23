@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: handmade-portfolio-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build -w @shop/shared && npm run build -w @shop/api
+    startCommand: node apps/api/dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: WEB_ORIGIN
+        value: https://shop.augustoamaral.com
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: handmade-portfolio
+      - key: R2_PUBLIC_URL
+        value: https://img.shop.augustoamaral.com
