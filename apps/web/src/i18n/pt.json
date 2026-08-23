@@ -33,6 +33,7 @@
     "missingSession": "Nenhuma sessão de checkout encontrada.",
     "confirming": "Confirmando seu pedido...",
     "pending": "Pagamento recebido — a confirmação ainda está sincronizando. Veja o recibo do Stripe no seu email.",
+    "error": "Não conseguimos confirmar seu pedido automaticamente. Veja o recibo do Stripe no seu email — se algo parecer errado, entre em contato.",
     "title": "Obrigado!",
     "body": "Seu pedido está confirmado. Veja o que você comprou:"
   }

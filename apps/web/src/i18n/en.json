@@ -33,6 +33,7 @@
     "missingSession": "No checkout session found.",
     "confirming": "Confirming your order...",
     "pending": "Payment received — the confirmation is still syncing. Check your email for the Stripe receipt.",
+    "error": "We couldn't confirm your order automatically. Please check your email for the Stripe receipt — if anything looks wrong, get in touch.",
     "title": "Thank you!",
     "body": "Your order is confirmed. Here's what you got:"
   }

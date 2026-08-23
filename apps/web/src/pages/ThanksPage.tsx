@@ -3,7 +3,7 @@ import { formatPrice } from '@shop/shared'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useSearchParams } from 'react-router'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { useCart } from '../lib/cart'
 import { useLang } from '../i18n'
 
@@ -19,11 +19,14 @@ export function ThanksPage() {
   const sessionId = params.get('session_id')
   const [summary, setSummary] = useState<Summary | null>(null)
   const [failed, setFailed] = useState(false)
+  const [hardError, setHardError] = useState(false)
 
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
     // The webhook may land a moment after the redirect — poll briefly.
+    // Only a 404 (order not created yet) is retried; any other error is a
+    // real failure and shouldn't be disguised as "still syncing".
     ;(async () => {
       for (let attempt = 0; attempt < 5 && !cancelled; attempt++) {
         try {
@@ -33,8 +36,12 @@ export function ThanksPage() {
             cart.clear()
           }
           return
-        } catch {
-          await new Promise((r) => setTimeout(r, 2000))
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.status !== 404) {
+            if (!cancelled) setHardError(true)
+            return
+          }
+          if (attempt < 4) await new Promise((r) => setTimeout(r, 2000))
         }
       }
       if (!cancelled) setFailed(true)
@@ -46,6 +53,7 @@ export function ThanksPage() {
   }, [sessionId])
 
   if (!sessionId) return <p>{t('thanks.missingSession')}</p>
+  if (hardError) return <p>{t('thanks.error')}</p>
   if (failed) return <p>{t('thanks.pending')}</p>
   if (!summary) return <p className="text-stone-500">{t('thanks.confirming')}</p>
 
