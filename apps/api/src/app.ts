@@ -3,6 +3,7 @@ import express from 'express'
 import { getEnv } from './env.js'
 import { errorHandler, notFoundHandler } from './errors.js'
 import { adminAuthRouter } from './routes/admin/auth.js'
+import { adminOrdersRouter } from './routes/admin/orders.js'
 import { adminProductsRouter } from './routes/admin/products.js'
 import { checkoutRouter } from './routes/checkout.js'
 import { ordersRouter } from './routes/orders.js'
@@ -20,6 +21,7 @@ export function createApp() {
     res.json({ ok: true })
   })
   app.use(adminAuthRouter)
+  app.use(adminOrdersRouter)
   app.use(adminProductsRouter)
   app.use(productsRouter)
   app.use(checkoutRouter)
