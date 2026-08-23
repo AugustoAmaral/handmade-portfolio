@@ -1,5 +1,16 @@
 {
   "brand": "My Handmade Portfolio",
   "tagline": "Most portfolios show the work. This one ships it.",
-  "nav": { "shop": "Shop", "about": "About", "cart": "Cart" }
+  "nav": { "shop": "Shop", "about": "About", "cart": "Cart" },
+  "store": { "loading": "Loading...", "soldOut": "Sold out" },
+  "product": {
+    "notFound": "This exhibit does not exist.",
+    "addToCart": "Add to cart",
+    "shippedByMail": "Shipped by actual mail",
+    "deliveredByEmail": "Delivered by email"
+  },
+  "about": {
+    "title": "What is this?",
+    "body": "This is my portfolio. Not screenshots of it — the actual work, handmade, and you can buy it.\n\nI'm Augusto, a software engineer from Brazil. Everything in this shop is really made by hand, by me: letters written with an actual pen, drawings on actual paper. When you buy something, I make it, and I mail it to wherever you are (or email it, for the digital pieces).\n\nThe shop itself is the engineering exhibit: a MERN + Stripe storefront with real payments, running end to end. The source code is public — check the repository to see how it's built.\n\nWhy? Because most portfolios show the work. This one ships it."
+  }
 }
