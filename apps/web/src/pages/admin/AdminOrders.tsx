@@ -12,12 +12,36 @@ interface AdminOrder {
   customer: { email?: string; name?: string }
   amounts: { totalCents: number }
   items: { slug: string; qty: number }[]
+  shippingAddress?: {
+    name?: string
+    address?: {
+      line1?: string
+      line2?: string
+      city?: string
+      state?: string
+      postal_code?: string
+      country?: string
+    }
+  } | null
 }
 
 const statusColors = {
   paid: 'bg-blue-100 text-blue-800',
   fulfilled: 'bg-green-100 text-green-800',
   oversold: 'bg-red-100 text-red-800',
+}
+
+function formatShippingAddress(shippingAddress: NonNullable<AdminOrder['shippingAddress']>): string {
+  const a = shippingAddress.address
+  const parts = [
+    shippingAddress.name,
+    a?.line1,
+    a?.line2,
+    [a?.city, a?.state].filter(Boolean).join(' '),
+    a?.postal_code,
+    a?.country,
+  ].filter(Boolean)
+  return parts.join(', ')
 }
 
 export function AdminOrders() {
@@ -49,6 +73,11 @@ export function AdminOrders() {
               {o.items.map((i) => `${i.qty}× ${i.slug}`).join(', ')} · {formatPrice(o.amounts.totalCents, 'en')}
               {o.trackingCode && ` · ${o.trackingCode}`}
             </p>
+            {o.shippingAddress && (
+              <p className="text-stone-500">
+                {t('admin.shipTo')}: {formatShippingAddress(o.shippingAddress)}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Badge className={statusColors[o.status]}>{o.status}</Badge>

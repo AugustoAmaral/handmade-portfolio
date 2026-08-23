@@ -90,6 +90,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       // The order already exists at this point, so a 500 here would only make Stripe retry
       // into the E11000 idempotency no-op above — the retry can never re-attempt this
       // decrement. Log loudly for manual reconciliation instead of rethrowing.
+      //
+      // Known accepted gap for v1: a crash between Order.create above and this decrement loop
+      // is unrecoverable via Stripe retries (the E11000 branch just no-ops) — the order stays
+      // 'paid' with stock never adjusted. We don't run Mongo transactions here (Atlas M0 is a
+      // single node without a replica set), so there's no atomic way to tie the two together.
+      // Reconcile manually from this RECONCILE log line / the admin order list if it happens.
       console.error('[webhook] RECONCILE: stock decrement failed after order create', {
         sessionId: session.id,
         productId: m.i,

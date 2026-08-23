@@ -27,6 +27,8 @@
     "checkout": "Finalizar compra",
     "redirecting": "Redirecionando...",
     "checkoutError": "Algo deu errado ao iniciar a compra. Tente novamente.",
+    "checkoutErrorOutOfStock": "\"{{name}}\" esgotou entre um clique e outro — removemos do carrinho. Dá uma olhada no que sobrou e tenta de novo.",
+    "checkoutErrorUnknownItem": "\"{{name}}\" não está mais disponível — removemos do carrinho. Segue o baile com o resto.",
     "realMoney": "Esta é uma loja de verdade — dinheiro de verdade, coisas feitas à mão de verdade."
   },
   "thanks": {
@@ -63,6 +65,7 @@
     "deleteConfirm": "Excluir este produto?",
     "markFulfilled": "Marcar como enviado",
     "trackingPrompt": "Código de rastreio (opcional)",
-    "noOrders": "Nenhum pedido ainda."
+    "noOrders": "Nenhum pedido ainda.",
+    "shipTo": "Enviar para"
   }
 }

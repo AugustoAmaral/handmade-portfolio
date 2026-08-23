@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router'
 import { Button, Card } from '../components/ui'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { useCart } from '../lib/cart'
 import { useLang } from '../i18n'
 
@@ -28,9 +28,12 @@ export function CartPage() {
 
   if (cart.items.length === 0)
     return (
-      <p className="text-stone-600">
-        {t('cart.empty')} <Link to="/" className="underline">{t('cart.backToShop')}</Link>
-      </p>
+      <div className="space-y-2">
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <p className="text-stone-600">
+          {t('cart.empty')} <Link to="/" className="underline">{t('cart.backToShop')}</Link>
+        </p>
+      </div>
     )
 
   const hasPhysical = lines.some((l) => l.product.type === 'physical')
@@ -43,11 +46,24 @@ export function CartPage() {
     try {
       const { url } = await api<{ url: string }>('/api/checkout', {
         method: 'POST',
-        body: JSON.stringify({ items: cart.items, destination, locale: lang }),
+        body: JSON.stringify({
+          items: lines.map((l) => ({ slug: l.slug, qty: l.qty })),
+          destination,
+          locale: lang,
+        }),
       })
       window.location.assign(url)
-    } catch {
-      setError(t('cart.checkoutError'))
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'OUT_OF_STOCK' || err.code === 'UNKNOWN_ITEM')) {
+        const slug = err.message.replace(/^.*: /, '')
+        const name = bySlug.get(slug)?.name[lang] ?? slug
+        cart.remove(slug)
+        setError(
+          t(err.code === 'OUT_OF_STOCK' ? 'cart.checkoutErrorOutOfStock' : 'cart.checkoutErrorUnknownItem', { name }),
+        )
+      } else {
+        setError(t('cart.checkoutError'))
+      }
       setSubmitting(false)
     }
   }
