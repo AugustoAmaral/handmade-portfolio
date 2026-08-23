@@ -11,6 +11,6 @@
   },
   "about": {
     "title": "O que é isso?",
-    "body": "Este é o meu portfólio. Não são capturas de tela dele — é o trabalho de verdade, feito à mão, e você pode comprar.\n\nSou o Augusto, engenheiro de software do Brasil. Tudo nesta loja é feito à mão por mim, de verdade: cartas escritas com caneta de verdade, desenhos em papel de verdade. Quando você compra algo, eu faço e envio pelos correios pra onde você estiver (ou por e-mail, no caso das peças digitais).\n\nA loja em si é o exhibit de engenharia: uma vitrine MERN + Stripe com pagamentos reais, funcionando de ponta a ponta. O código-fonte é público — dá uma olhada no repositório pra ver como foi construído.\n\nPor quê? Porque a maioria dos portfólios mostra o trabalho. Este entrega."
+    "body": "Este é o meu portfólio. Não são capturas de tela dele — é o trabalho de verdade, feito à mão, e você pode comprar.\n\nSou o Augusto, engenheiro de software do Brasil. Tudo nesta loja é feito à mão por mim, de verdade: cartas escritas com caneta de verdade, desenhos em papel de verdade. Quando você compra algo, eu faço e envio pelos correios pra onde você estiver (ou por e-mail, no caso das peças digitais).\n\nA própria loja é a peça de engenharia deste portfólio: uma vitrine MERN + Stripe com pagamentos reais, funcionando de ponta a ponta. O código-fonte é público — dá uma olhada no repositório pra ver como foi construído.\n\nPor quê? Porque a maioria dos portfólios mostra o trabalho. Este chega na sua casa."
   }
 }
