@@ -36,5 +36,33 @@
     "error": "Não conseguimos confirmar seu pedido automaticamente. Veja o recibo do Stripe no seu email — se algo parecer errado, entre em contato.",
     "title": "Obrigado!",
     "body": "Seu pedido está confirmado. Veja o que você comprou:"
+  },
+  "admin": {
+    "title": "Admin",
+    "loginTitle": "Login do admin",
+    "email": "Email",
+    "password": "Senha",
+    "signIn": "Entrar",
+    "invalidCredentials": "Email ou senha inválidos.",
+    "logout": "Sair",
+    "products": "Produtos",
+    "orders": "Pedidos",
+    "newProduct": "Novo produto",
+    "name": "Nome",
+    "description": "Descrição",
+    "priceCents": "Preço (centavos)",
+    "madeToOrder": "Feito sob encomenda",
+    "stock": "Estoque",
+    "active": "Ativo",
+    "inactive": "Inativo",
+    "photos": "Fotos",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "edit": "Editar",
+    "delete": "Excluir",
+    "deleteConfirm": "Excluir este produto?",
+    "markFulfilled": "Marcar como enviado",
+    "trackingPrompt": "Código de rastreio (opcional)",
+    "noOrders": "Nenhum pedido ainda."
   }
 }

@@ -36,5 +36,33 @@
     "error": "We couldn't confirm your order automatically. Please check your email for the Stripe receipt — if anything looks wrong, get in touch.",
     "title": "Thank you!",
     "body": "Your order is confirmed. Here's what you got:"
+  },
+  "admin": {
+    "title": "Admin",
+    "loginTitle": "Admin login",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "invalidCredentials": "Invalid email or password.",
+    "logout": "Log out",
+    "products": "Products",
+    "orders": "Orders",
+    "newProduct": "New product",
+    "name": "Name",
+    "description": "Description",
+    "priceCents": "Price (cents)",
+    "madeToOrder": "Made to order",
+    "stock": "Stock",
+    "active": "Active",
+    "inactive": "Inactive",
+    "photos": "Photos",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this product?",
+    "markFulfilled": "Mark fulfilled",
+    "trackingPrompt": "Tracking code (optional)",
+    "noOrders": "No orders yet."
   }
 }
