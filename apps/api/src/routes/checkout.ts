@@ -47,6 +47,9 @@ checkoutRouter.post('/api/checkout', async (req, res) => {
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
+    // v1 is card only (see design spec) — this also keeps the webhook's payment_status
+    // check meaningful, since card payments settle synchronously.
+    payment_method_types: ['card'],
     line_items: lineItems,
     locale,
     ...(hasPhysical && {

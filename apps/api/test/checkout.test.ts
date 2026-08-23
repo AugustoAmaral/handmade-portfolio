@@ -46,6 +46,7 @@ describe('POST /api/checkout', () => {
         price_data: expect.objectContaining({ currency: 'brl', unit_amount: 5000 }),
       }),
     ])
+    expect(params.payment_method_types).toEqual(['card'])
     expect(params.locale).toBe('pt')
     expect(JSON.parse(params.metadata!.items as string)).toEqual([
       { i: letterId, s: 'letter', q: 2, u: 5000 },

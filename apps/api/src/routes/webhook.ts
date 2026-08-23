@@ -27,6 +27,12 @@ webhookRouter.post('/api/stripe/webhook', express.raw({ type: 'application/json'
 })
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
+  // v1 only accepts card payments (see checkout.ts), which settle synchronously, but async
+  // payment methods (e.g. Pix) can be flipped on via the Stripe dashboard without a deploy.
+  // Those fire this same event with payment_status 'unpaid' — treating that as paid would
+  // create a paid order and permanently decrement stock for money that never arrives.
+  if (session.payment_status !== 'paid') return
+
   const meta: { i: string; s: string; q: number; u: number }[] = JSON.parse(session.metadata?.items ?? '[]')
   const products = await Product.find({ _id: { $in: meta.map((m) => m.i) } })
   const byId = new Map(products.map((p) => [String(p._id), p]))
@@ -71,13 +77,24 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   for (const m of meta) {
     const p = byId.get(m.i)
     if (!p || p.stock === null) continue
-    const decremented = await Product.findOneAndUpdate(
-      { _id: m.i, stock: { $gte: m.q } },
-      { $inc: { stock: -m.q } },
-    )
-    if (!decremented) {
-      order.status = 'oversold'
-      await order.save()
+    try {
+      const decremented = await Product.findOneAndUpdate(
+        { _id: m.i, stock: { $gte: m.q } },
+        { $inc: { stock: -m.q } },
+      )
+      if (!decremented) {
+        order.status = 'oversold'
+        await order.save()
+      }
+    } catch (err) {
+      // The order already exists at this point, so a 500 here would only make Stripe retry
+      // into the E11000 idempotency no-op above — the retry can never re-attempt this
+      // decrement. Log loudly for manual reconciliation instead of rethrowing.
+      console.error('[webhook] RECONCILE: stock decrement failed after order create', {
+        sessionId: session.id,
+        productId: m.i,
+        err,
+      })
     }
   }
 }

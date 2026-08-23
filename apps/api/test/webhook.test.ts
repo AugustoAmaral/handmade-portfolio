@@ -27,6 +27,7 @@ function completedEvent(sessionOverrides: object = {}) {
         id: 'cs_test_done',
         object: 'checkout.session',
         payment_intent: 'pi_1',
+        payment_status: 'paid',
         amount_subtotal: 12000,
         amount_total: 13500,
         currency: 'brl',
@@ -103,5 +104,13 @@ describe('POST /api/stripe/webhook', () => {
     const res = await signedPost({ id: 'evt_2', type: 'payment_intent.created', data: { object: {} } })
     expect(res.status).toBe(200)
     expect(await Order.countDocuments()).toBe(0)
+  })
+
+  it('does not create an order or decrement stock for an unpaid (async payment method) session', async () => {
+    const res = await signedPost(completedEvent({ metadata: metadataFor(), payment_status: 'unpaid' }))
+    expect(res.status).toBe(200)
+    expect(await Order.countDocuments()).toBe(0)
+    const drawing = await Product.findById(drawingId)
+    expect(drawing!.stock).toBe(1)
   })
 })
