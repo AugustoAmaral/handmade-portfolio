@@ -2,6 +2,7 @@ import cors from 'cors'
 import express from 'express'
 import { getEnv } from './env.js'
 import { errorHandler, notFoundHandler } from './errors.js'
+import { checkoutRouter } from './routes/checkout.js'
 import { productsRouter } from './routes/products.js'
 
 export function createApp() {
@@ -13,6 +14,7 @@ export function createApp() {
     res.json({ ok: true })
   })
   app.use(productsRouter)
+  app.use(checkoutRouter)
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app
