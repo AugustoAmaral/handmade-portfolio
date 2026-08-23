@@ -3,18 +3,23 @@ import express from 'express'
 import { getEnv } from './env.js'
 import { errorHandler, notFoundHandler } from './errors.js'
 import { checkoutRouter } from './routes/checkout.js'
+import { ordersRouter } from './routes/orders.js'
 import { productsRouter } from './routes/products.js'
+import { webhookRouter } from './routes/webhook.js'
 
 export function createApp() {
   const app = express()
   app.use(cors({ origin: getEnv().WEB_ORIGIN }))
-  // NOTE: the Stripe webhook route (Task 5) mounts BEFORE express.json() — it needs the raw body.
+  // The Stripe webhook route needs the raw body for signature verification, so it must
+  // mount BEFORE express.json().
+  app.use(webhookRouter)
   app.use(express.json())
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true })
   })
   app.use(productsRouter)
   app.use(checkoutRouter)
+  app.use(ordersRouter)
   app.use(notFoundHandler)
   app.use(errorHandler)
   return app
