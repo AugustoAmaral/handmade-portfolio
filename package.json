@@ -1,0 +1,12 @@
+{
+  "name": "handmade-portfolio",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "npm run build -w @shop/shared && npm run build -w @shop/api && npm run build -w @shop/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test -w @shop/shared && npm run test -w @shop/api && npm run test -w @shop/web"
+  }
+}
