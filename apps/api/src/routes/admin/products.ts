@@ -39,7 +39,12 @@ adminProductsRouter.put('/api/admin/products/:id', async (req, res) => {
   const input = productInputSchema.parse(req.body)
   const doc = await findProduct(req.params.id)
   doc.set(input)
-  await doc.save()
+  try {
+    await doc.save()
+  } catch (err) {
+    if ((err as { code?: number }).code === 11000) throw new AppError(409, 'SLUG_TAKEN', 'Slug already in use')
+    throw err
+  }
   res.json({ product: toPublicProduct(doc) })
 })
 

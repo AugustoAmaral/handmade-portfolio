@@ -63,6 +63,18 @@ describe('admin products', () => {
     expect(dup.body.error.code).toBe('SLUG_TAKEN')
   })
 
+  it('409s on updating a product to another product\'s slug', async () => {
+    await Product.init()
+    const app = createApp()
+    await auth(request(app).post('/api/admin/products').send(input))
+    const other = await auth(request(app).post('/api/admin/products').send({ ...input, slug: 'other-item' }))
+    const id = other.body.product.id
+
+    const res = await auth(request(app).put(`/api/admin/products/${id}`).send({ ...input, slug: 'new-item' }))
+    expect(res.status).toBe(409)
+    expect(res.body.error.code).toBe('SLUG_TAKEN')
+  })
+
   it('uploads a photo: converts to webp, stores under products/{id}/', async () => {
     const app = createApp()
     const created = await auth(request(app).post('/api/admin/products').send(input))
