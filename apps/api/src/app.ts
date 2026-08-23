@@ -2,6 +2,7 @@ import cors from 'cors'
 import express from 'express'
 import { getEnv } from './env.js'
 import { errorHandler, notFoundHandler } from './errors.js'
+import { adminAuthRouter } from './routes/admin/auth.js'
 import { checkoutRouter } from './routes/checkout.js'
 import { ordersRouter } from './routes/orders.js'
 import { productsRouter } from './routes/products.js'
@@ -17,6 +18,7 @@ export function createApp() {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true })
   })
+  app.use(adminAuthRouter)
   app.use(productsRouter)
   app.use(checkoutRouter)
   app.use(ordersRouter)

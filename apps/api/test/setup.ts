@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 import mongoose from 'mongoose'
 import { afterAll, afterEach, beforeAll } from 'vitest'
@@ -7,8 +8,7 @@ process.env.STRIPE_SECRET_KEY = 'sk_test_dummy'
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_testsecret'
 process.env.JWT_SECRET = 'test-jwt-secret'
 process.env.ADMIN_EMAIL = 'admin@example.com'
-// bcrypt hash of "admin123" is generated in tests that need it (see Task 6)
-process.env.ADMIN_PASSWORD_HASH = '$2b$10$placeholderplaceholderplaceholderplaceholde'
+process.env.ADMIN_PASSWORD_HASH = bcrypt.hashSync('admin123', 10)
 process.env.WEB_ORIGIN = 'http://localhost:5173'
 process.env.R2_ACCOUNT_ID = 'test-account'
 process.env.R2_ACCESS_KEY_ID = 'test-key'
