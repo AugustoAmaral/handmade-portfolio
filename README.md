@@ -2,7 +2,7 @@
 
 A working e-commerce store where the products are my actual craft — handwritten letters, pencil drawings, digital doodles — and the checkout is a real Stripe payment for real money.
 
-**Live:** https://shop.augustoamaral.com
+**Live:** https://shop.augustoamaral.com (deploy in progress — see `docs/deploy.md`)
 
 ## The joke, explained
 
