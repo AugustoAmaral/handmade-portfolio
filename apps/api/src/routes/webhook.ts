@@ -22,85 +22,66 @@ webhookRouter.post('/api/stripe/webhook', express.raw({ type: 'application/json'
 
   if (event.type === 'checkout.session.completed') {
     await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session)
+  } else if (event.type === 'checkout.session.expired') {
+    await handleCheckoutExpired(event.data.object as Stripe.Checkout.Session)
   }
   res.json({ received: true })
 })
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  // v1 only accepts card payments (see checkout.ts), which settle synchronously, but async
-  // payment methods (e.g. Pix) can be flipped on via the Stripe dashboard without a deploy.
-  // Those fire this same event with payment_status 'unpaid' — treating that as paid would
-  // create a paid order and permanently decrement stock for money that never arrives.
+  // Card only (see checkout-session.ts), but async methods can be flipped on in the Stripe
+  // dashboard without a deploy and fire this event with payment_status 'unpaid'.
   if (session.payment_status !== 'paid') return
 
-  const meta: { i: string; s: string; q: number; u: number }[] = JSON.parse(session.metadata?.items ?? '[]')
-  const products = await Product.find({ _id: { $in: meta.map((m) => m.i) } })
-  const byId = new Map(products.map((p) => [String(p._id), p]))
+  const update: Record<string, unknown> = { status: 'paid', paidAt: new Date() }
+  if (typeof session.payment_intent === 'string') update.stripePaymentIntentId = session.payment_intent
+  if (session.amount_total != null) update['amounts.totalCents'] = session.amount_total
+  if (session.currency) update['amounts.currency'] = session.currency
 
-  // Some Stripe API versions expose shipping under collected_information.
-  const sessionAny = session as unknown as Record<string, unknown>
-  const collected = sessionAny.collected_information as { shipping_details?: unknown } | undefined
-  const shippingAddress = collected?.shipping_details ?? sessionAny.shipping_details ?? null
+  // The idempotency gate: only a pending order flips to paid, and only once. A duplicate
+  // delivery (Stripe retries aggressively) finds nothing to update and stops here.
+  const before = await Order.findOneAndUpdate(
+    { stripeSessionId: session.id, status: 'pending' },
+    { $set: update },
+    { new: false },
+  )
+  if (!before) return
 
-  let order
-  try {
-    // Order.create is the idempotency gate: the unique index on stripeSessionId
-    // makes sure stock is decremented exactly once per session.
-    order = await Order.create({
-      stripeSessionId: session.id,
-      stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : undefined,
-      items: meta.map((m) => {
-        const p = byId.get(m.i)
-        return {
-          productId: m.i,
-          slug: m.s,
-          name: p ? { pt: p.name!.pt, en: p.name!.en } : { pt: m.s, en: m.s },
-          qty: m.q,
-          unitAmountCents: m.u,
-        }
-      }),
-      amounts: {
-        itemsCents: session.amount_subtotal ?? 0,
-        shippingCents: session.total_details?.amount_shipping ?? 0,
-        totalCents: session.amount_total ?? 0,
-        currency: session.currency ?? 'brl',
-      },
-      customer: { email: session.customer_details?.email, name: session.customer_details?.name },
-      shippingAddress,
-      status: 'paid',
+  if (session.amount_total != null && session.amount_total !== before.amounts!.totalCents) {
+    console.error('[webhook] RECONCILE: Stripe charged a different total than the order snapshot', {
+      orderNumber: before.orderNumber,
+      snapshotCents: before.amounts!.totalCents,
+      chargedCents: session.amount_total,
     })
-  } catch (err) {
-    if ((err as { code?: number }).code === 11000) return // duplicate event
-    throw err
   }
 
-  for (const m of meta) {
-    const p = byId.get(m.i)
-    if (!p || p.stock === null) continue
+  const products = await Product.find({ _id: { $in: before.items.map((i) => i.productId) } })
+  const byId = new Map(products.map((p) => [String(p._id), p]))
+
+  for (const item of before.items) {
+    const product = byId.get(item.productId)
+    if (!product || product.stock === null) continue // made to order: nothing to decrement
     try {
       const decremented = await Product.findOneAndUpdate(
-        { _id: m.i, stock: { $gte: m.q } },
-        { $inc: { stock: -m.q } },
+        { _id: item.productId, stock: { $gte: item.qty } },
+        { $inc: { stock: -item.qty } },
       )
       if (!decremented) {
-        order.status = 'oversold'
-        await order.save()
+        await Order.updateOne({ _id: before._id }, { $set: { status: 'oversold' } })
       }
     } catch (err) {
-      // The order already exists at this point, so a 500 here would only make Stripe retry
-      // into the E11000 idempotency no-op above — the retry can never re-attempt this
-      // decrement. Log loudly for manual reconciliation instead of rethrowing.
-      //
-      // Known accepted gap for v1: a crash between Order.create above and this decrement loop
-      // is unrecoverable via Stripe retries (the E11000 branch just no-ops) — the order stays
-      // 'paid' with stock never adjusted. We don't run Mongo transactions here (Atlas M0 is a
-      // single node without a replica set), so there's no atomic way to tie the two together.
-      // Reconcile manually from this RECONCILE log line / the admin order list if it happens.
-      console.error('[webhook] RECONCILE: stock decrement failed after order create', {
-        sessionId: session.id,
-        productId: m.i,
+      // The order is already paid at this point, so a 500 would only make Stripe retry into
+      // the no-op above. Known v1 gap kept: no transactions on Atlas M0, so a crash between the
+      // status flip and this loop leaves a paid order with stock never adjusted. Log loudly.
+      console.error('[webhook] RECONCILE: stock decrement failed after order was paid', {
+        orderNumber: before.orderNumber,
+        productId: item.productId,
         err,
       })
     }
   }
+}
+
+async function handleCheckoutExpired(session: Stripe.Checkout.Session) {
+  await Order.updateOne({ stripeSessionId: session.id, status: 'pending' }, { $set: { status: 'expired' } })
 }

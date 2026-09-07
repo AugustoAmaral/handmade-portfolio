@@ -1,6 +1,6 @@
 import Stripe from 'stripe'
 import request from 'supertest'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
 import { Order } from '../src/models/order'
 import { Product } from '../src/models/product'
@@ -18,23 +18,20 @@ function signedPost(payload: object) {
     .send(body)
 }
 
-function completedEvent(sessionOverrides: object = {}) {
+function event(type: string, sessionOverrides: object = {}) {
   return {
     id: 'evt_1',
-    type: 'checkout.session.completed',
+    type,
     data: {
       object: {
         id: 'cs_test_done',
         object: 'checkout.session',
         payment_intent: 'pi_1',
         payment_status: 'paid',
-        amount_subtotal: 12000,
-        amount_total: 13500,
+        amount_subtotal: 16100,
+        amount_total: 16100,
         currency: 'brl',
-        total_details: { amount_shipping: 1500 },
-        customer_details: { email: 'buyer@example.com', name: 'Buyer' },
-        shipping_details: { name: 'Buyer', address: { country: 'BR', line1: 'Rua X, 1' } },
-        metadata: {},
+        metadata: { orderId: 'x', orderNumber: '1' },
         ...sessionOverrides,
       },
     },
@@ -44,17 +41,23 @@ function completedEvent(sessionOverrides: object = {}) {
 let drawingId: string
 
 beforeEach(async () => {
-  await Order.init()
+  await Order.syncIndexes()
   const drawing = await Product.create({
     slug: 'drawing', name: { pt: 'Desenho', en: 'Drawing' }, description: { pt: 'x', en: 'x' },
     priceCents: 12000, type: 'physical', stock: 1, active: true,
   })
   drawingId = String(drawing._id)
-})
-
-const metadataFor = (qty = 1) => ({
-  items: JSON.stringify([{ i: drawingId, s: 'drawing', q: qty, u: 12000 }]),
-  destination: 'BR',
+  await Order.create({
+    orderNumber: 1,
+    status: 'pending',
+    stripeSessionId: 'cs_test_done',
+    buyer: { name: 'Buyer', email: 'buyer@example.com' },
+    shippingAddress: { country: 'BR', postalCode: '30150-904', street: 'Rua X', number: '1', district: 'Centro', city: 'BH', state: 'MG' },
+    shippingMethod: 'sedex',
+    locale: 'en',
+    items: [{ productId: drawingId, slug: 'drawing', name: { pt: 'Desenho', en: 'Drawing' }, qty: 1, unitAmountCents: 12000 }],
+    amounts: { itemsCents: 12000, shippingCents: 4100, totalCents: 16100, currency: 'brl' },
+  })
 })
 
 describe('POST /api/stripe/webhook', () => {
@@ -66,51 +69,70 @@ describe('POST /api/stripe/webhook', () => {
       .send('{}')
     expect(res.status).toBe(400)
     expect(res.body.error.code).toBe('INVALID_SIGNATURE')
-    expect(await Order.countDocuments()).toBe(0)
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('pending')
   })
 
-  it('creates an order and decrements one-of-one stock', async () => {
-    const res = await signedPost(completedEvent({ metadata: metadataFor() }))
+  it('confirms the pending order and decrements one-of-one stock', async () => {
+    const res = await signedPost(event('checkout.session.completed'))
     expect(res.status).toBe(200)
-    const order = await Order.findOne({ stripeSessionId: 'cs_test_done' })
-    expect(order).not.toBeNull()
-    expect(order!.status).toBe('paid')
-    expect(order!.amounts!.totalCents).toBe(13500)
-    expect(order!.amounts!.shippingCents).toBe(1500)
-    expect(order!.items[0]!.name!.en).toBe('Drawing')
-    expect(order!.customer!.email).toBe('buyer@example.com')
-    expect(order!.shippingAddress).toMatchObject({ address: { country: 'BR' } })
-    const drawing = await Product.findById(drawingId)
-    expect(drawing!.stock).toBe(0)
+    const order = (await Order.findOne({ orderNumber: 1 }))!
+    expect(order.status).toBe('paid')
+    expect(order.paidAt).toBeInstanceOf(Date)
+    expect(order.stripePaymentIntentId).toBe('pi_1')
+    expect(order.amounts!.totalCents).toBe(16100)
+    expect(order.amounts!.shippingCents).toBe(4100) // our breakdown is kept
+    expect(order.buyer!.email).toBe('buyer@example.com') // untouched
+    expect((await Product.findById(drawingId))!.stock).toBe(0)
   })
 
-  it('is idempotent for duplicate events', async () => {
-    await signedPost(completedEvent({ metadata: metadataFor() }))
-    const res = await signedPost(completedEvent({ metadata: metadataFor() }))
+  it('takes the charged total from Stripe when it differs, and logs it', async () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await signedPost(event('checkout.session.completed', { amount_total: 16000 }))
+    expect((await Order.findOne({ orderNumber: 1 }))!.amounts!.totalCents).toBe(16000)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('RECONCILE'), expect.anything())
+    warn.mockRestore()
+  })
+
+  it('is idempotent: a duplicate delivery does not decrement twice', async () => {
+    await signedPost(event('checkout.session.completed'))
+    const res = await signedPost(event('checkout.session.completed'))
     expect(res.status).toBe(200)
+    expect((await Product.findById(drawingId))!.stock).toBe(0)
     expect(await Order.countDocuments()).toBe(1)
-    const drawing = await Product.findById(drawingId)
-    expect(drawing!.stock).toBe(0) // decremented exactly once
   })
 
-  it('marks the order oversold when stock ran out', async () => {
+  it('marks the order oversold when stock ran out between checkout and payment', async () => {
     await Product.updateOne({ _id: drawingId }, { stock: 0 })
-    await signedPost(completedEvent({ metadata: metadataFor() }))
-    const order = await Order.findOne({ stripeSessionId: 'cs_test_done' })
-    expect(order!.status).toBe('oversold')
+    await signedPost(event('checkout.session.completed'))
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('oversold')
+  })
+
+  it('does not touch made-to-order products', async () => {
+    await Product.updateOne({ _id: drawingId }, { stock: null })
+    await signedPost(event('checkout.session.completed'))
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('paid')
+    expect((await Product.findById(drawingId))!.stock).toBeNull()
+  })
+
+  it('ignores an unpaid session (async payment methods) and unknown sessions', async () => {
+    await signedPost(event('checkout.session.completed', { payment_status: 'unpaid' }))
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('pending')
+    const res = await signedPost(event('checkout.session.completed', { id: 'cs_unknown' }))
+    expect(res.status).toBe(200)
+    expect((await Product.findById(drawingId))!.stock).toBe(1)
+  })
+
+  it('expires a pending order on checkout.session.expired, but never a paid one', async () => {
+    await signedPost(event('checkout.session.expired'))
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('expired')
+    await Order.updateOne({ orderNumber: 1 }, { status: 'paid' })
+    await signedPost(event('checkout.session.expired'))
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('paid')
   })
 
   it('ignores unrelated event types', async () => {
     const res = await signedPost({ id: 'evt_2', type: 'payment_intent.created', data: { object: {} } })
     expect(res.status).toBe(200)
-    expect(await Order.countDocuments()).toBe(0)
-  })
-
-  it('does not create an order or decrement stock for an unpaid (async payment method) session', async () => {
-    const res = await signedPost(completedEvent({ metadata: metadataFor(), payment_status: 'unpaid' }))
-    expect(res.status).toBe(200)
-    expect(await Order.countDocuments()).toBe(0)
-    const drawing = await Product.findById(drawingId)
-    expect(drawing!.stock).toBe(1)
+    expect((await Order.findOne({ orderNumber: 1 }))!.status).toBe('pending')
   })
 })
