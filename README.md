@@ -2,7 +2,7 @@
 
 A working e-commerce store where the products are my actual craft — handwritten letters, pencil drawings, digital doodles — and the checkout is a real Stripe payment for real money.
 
-**Live:** https://shop.augustoamaral.com (deploy in progress — see `docs/deploy.md`)
+**Live:** https://shop.augustoamaral.com
 
 ## The joke, explained
 
@@ -93,6 +93,7 @@ The e2e suite has three tests: storefront → product → cart, admin login → 
 - **API:** Render free tier — `api.shop.augustoamaral.com`.
 - **Database:** MongoDB Atlas, M0 (free) tier.
 - **Photos:** Cloudflare R2 — `img.shop.augustoamaral.com`.
+- **Keep-alive:** UptimeRobot hits `/api/health` every 5 minutes so the free Render instance never idles.
 
 Full deploy steps, environment variables, and DNS setup live in [`docs/deploy.md`](docs/deploy.md).
 
@@ -100,5 +101,5 @@ Full deploy steps, environment variables, and DNS setup live in [`docs/deploy.md
 
 This shop is one piece of a small set of portfolio properties:
 
-- [arte.augustoamaral.com](https://arte.augustoamaral.com) — the art itself, outside of the shop.
+- [arte.augustoamaral.com](https://arte.augustoamaral.com) — Arte à Mesa, a tableware rental system built for a real shop.
 - [resume.augustoamaral.com](https://resume.augustoamaral.com) — my résumé.

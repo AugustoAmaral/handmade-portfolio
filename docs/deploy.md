@@ -63,3 +63,5 @@ With Stripe still in test mode, do a full purchase on the live site using the te
 ## 9. Go-live (later, after Stripe KYC)
 
 Once Stripe finishes account activation (KYC), swap `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in Render to their live-mode values (`sk_live_...` / a webhook endpoint created against the live API), and create the equivalent live-mode webhook endpoint (Stripe test and live webhooks are separate). Nothing else in this runbook changes — same Render service, same Cloudflare Worker, same domains.
+
+While the Stripe account is still under review, live keys already work for creating Checkout Sessions but payments stay paused, so a real card fails at the payment step. Wait for the activation email, then do one real purchase of the cheapest item and refund it from the Stripe dashboard to verify the webhook end to end.
