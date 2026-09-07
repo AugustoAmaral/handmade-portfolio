@@ -67,12 +67,3 @@ With Stripe still in test mode, do a full purchase on the live site using the te
 Once Stripe finishes account activation (KYC), swap `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in Render to their live-mode values (`sk_live_...` / a webhook endpoint created against the live API), and create the equivalent live-mode webhook endpoint (Stripe test and live webhooks are separate). Nothing else in this runbook changes — same Render service, same Cloudflare Worker, same domains.
 
 While the Stripe account is still under review, live keys already work for creating Checkout Sessions but payments stay paused, so a real card fails at the payment step. Wait for the activation email, then do one real purchase of the cheapest item and refund it from the Stripe dashboard to verify the webhook end to end.
-
-## Appendix: backing up env vars as repo secrets
-
-`scripts/env-to-gh-secrets.sh` pushes every `KEY="VALUE"` line of a `.env` file to this repo's GitHub Actions secrets via `gh`, as an off-machine copy of the Render configuration. Dry run first:
-
-```bash
-scripts/env-to-gh-secrets.sh -n -f apps/api/.env
-scripts/env-to-gh-secrets.sh -f apps/api/.env
-```
