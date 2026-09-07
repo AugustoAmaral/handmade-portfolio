@@ -38,7 +38,9 @@ const orderItemSchema = new Schema(
 
 const orderSchema = new Schema(
   {
-    orderNumber: { type: Number, required: true, unique: true },
+    // Sparse so that unmigrated v1 documents (no orderNumber) do not break the index build at
+    // boot; v2 documents always carry it because the schema requires it.
+    orderNumber: { type: Number, required: true, unique: true, sparse: true },
     status: { type: String, enum: ORDER_STATUSES, required: true, default: 'pending' },
     // Set right after the Stripe session is created; pending orders briefly have none, hence sparse.
     stripeSessionId: { type: String, unique: true, sparse: true },

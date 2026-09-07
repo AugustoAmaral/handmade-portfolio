@@ -58,12 +58,6 @@ describe('migrateOrderDoc', () => {
 describe('runMigration', () => {
   it('migrates v1 documents oldest first, numbers them, and leaves v2 documents alone', async () => {
     const col = mongoose.connection.collection('orders')
-    // Order declares a non-sparse unique index on orderNumber; mongoose's autoIndex races to
-    // build it in the background as soon as the connection opens. Wait it out, then drop it, so
-    // inserting two legacy docs that both lack orderNumber (both index as null) doesn't collide —
-    // runMigration()'s trailing Order.syncIndexes() rebuilds it once every doc has a real number.
-    await Order.init()
-    await col.dropIndexes().catch(() => {})
     await col.insertMany([v1Digital, v1Physical]) // inserted out of order on purpose
     await Order.create({
       orderNumber: 500, status: 'pending', stripeSessionId: 'cs_v2', buyer: { name: 'V2', email: 'v2@example.com' }, locale: 'pt',
@@ -83,5 +77,20 @@ describe('runMigration', () => {
     expect((await Order.findOne({ orderNumber: 500 }))!.status).toBe('pending')
 
     expect(await runMigration()).toBe(0) // idempotent
+  })
+
+  it('keeps indexes buildable while legacy documents exist', async () => {
+    const col = mongoose.connection.collection('orders')
+    await col.insertMany([v1Digital, v1Physical]) // both lack orderNumber, as v1 always did
+
+    // orderNumber is sparse specifically so this doesn't throw with unmigrated documents present.
+    await expect(Order.syncIndexes()).resolves.toBeDefined()
+
+    expect(await runMigration()).toBe(2)
+
+    const a = (await Order.findOne({ stripeSessionId: 'cs_v1_a' }))!
+    const b = (await Order.findOne({ stripeSessionId: 'cs_v1_b' }))!
+    expect(a.orderNumber).toBe(1) // older
+    expect(b.orderNumber).toBe(2)
   })
 })
