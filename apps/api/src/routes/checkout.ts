@@ -78,12 +78,30 @@ checkoutRouter.post('/api/checkout', async (req, res) => {
     )
   } catch (err) {
     // No session means the buyer can never pay this order; drop it rather than leave a ghost.
-    await Order.deleteOne({ _id: order._id })
+    // Best-effort: if the cleanup itself fails, still surface the original Stripe failure.
+    await Order.deleteOne({ _id: order._id }).catch((cleanupErr) => {
+      console.error('[checkout] RECONCILE: could not delete pending order after Stripe failure', {
+        orderNumber,
+        cleanupErr,
+      })
+    })
     console.error('[checkout] stripe session creation failed', { orderNumber, err })
     throw new AppError(502, 'STRIPE_UNAVAILABLE', 'Payment provider unavailable, please try again')
   }
 
-  order.stripeSessionId = session.id
-  await order.save()
+  try {
+    order.stripeSessionId = session.id
+    await order.save()
+  } catch (err) {
+    // A live Stripe session with nothing to reconcile it to is worse than an expired one:
+    // expire the session and drop the order rather than leave an unpayable ghost order behind.
+    await Promise.allSettled([stripe.checkout.sessions.expire(session.id), Order.deleteOne({ _id: order._id })])
+    console.error('[checkout] RECONCILE: failed to persist session id after Stripe session creation', {
+      orderNumber,
+      sessionId: session.id,
+      err,
+    })
+    throw err
+  }
   res.json({ url: session.url, orderNumber })
 })

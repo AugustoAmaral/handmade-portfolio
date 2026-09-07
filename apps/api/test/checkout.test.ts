@@ -6,9 +6,10 @@ import { Product } from '../src/models/product'
 import { stripe } from '../src/lib/stripe'
 
 vi.mock('../src/lib/stripe', () => ({
-  stripe: { checkout: { sessions: { create: vi.fn() } } },
+  stripe: { checkout: { sessions: { create: vi.fn(), expire: vi.fn() } } },
 }))
 const sessionsCreate = vi.mocked(stripe.checkout.sessions.create)
+const sessionsExpire = vi.mocked(stripe.checkout.sessions.expire)
 
 const buyer = { name: 'Marina Bicalho', email: 'marina@example.com', phone: '+55 31 98812-4407' }
 const brAddress = {
@@ -26,6 +27,8 @@ let letterId: string
 beforeEach(async () => {
   sessionsCreate.mockReset()
   sessionsCreate.mockResolvedValue({ id: 'cs_test_1', url: 'https://checkout.stripe.com/c/pay/cs_test_1' } as never)
+  sessionsExpire.mockReset()
+  sessionsExpire.mockResolvedValue({ id: 'cs_test_1' } as never)
   const letter = await Product.create({
     slug: 'letter', name: { pt: 'Carta', en: 'Letter' }, description: { pt: 'x', en: 'x' },
     priceCents: 5000, type: 'physical', stock: null, active: true,
@@ -135,10 +138,31 @@ describe('POST /api/checkout', () => {
   })
 
   it('deletes the pending order and answers 502 when Stripe fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     sessionsCreate.mockRejectedValue(new Error('stripe down'))
     const res = await post(physical)
     expect(res.status).toBe(502)
     expect(res.body.error.code).toBe('STRIPE_UNAVAILABLE')
     expect(await Order.countDocuments()).toBe(0)
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[checkout]'), expect.anything())
+    errorSpy.mockRestore()
+  })
+
+  it('expires the Stripe session and drops the order when persisting the session id fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Order.create() persists via Document#$save, a reference captured at module load time —
+    // it does not go through Order.prototype.save. So the only call this spy ever sees is the
+    // route's own explicit `order.save()` after the Stripe session is created.
+    const saveSpy = vi.spyOn(Order.prototype, 'save').mockRejectedValueOnce(new Error('mongo down'))
+
+    const res = await post(physical)
+    expect(res.status).toBe(500)
+    expect(res.body.error.code).toBe('INTERNAL')
+    expect(sessionsExpire).toHaveBeenCalledWith('cs_test_1')
+    expect(await Order.countDocuments()).toBe(0)
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[checkout]'), expect.anything())
+
+    saveSpy.mockRestore()
+    errorSpy.mockRestore()
   })
 })
