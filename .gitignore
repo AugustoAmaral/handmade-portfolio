@@ -4,3 +4,7 @@ dist/
 *.local
 test-results/
 playwright-report/
+
+# Claude Design export: files that embed Augusto's photos stay local
+design-claude-design/.image-slots.state.json
+design-claude-design/.thumbnail

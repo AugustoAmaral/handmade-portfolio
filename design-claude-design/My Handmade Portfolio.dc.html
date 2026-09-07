@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,300;6..72,400&display=swap" rel="stylesheet">
+<script src="./image-slot.js"></script>
+<style>
+  body { margin: 0; background: #f4f0e6; }
+  a { color: #1a1713; text-decoration: none; }
+  a:hover { color: #a63d20; }
+  input, button, select, textarea { font: inherit; color: inherit; }
+  input, select, textarea { background: transparent; border: 1px solid #1a1713; padding: 12px 13px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; outline: none; width: 100%; box-sizing: border-box; border-radius: 0; }
+  input:focus, select:focus, textarea:focus { border-color: #a63d20; }
+  textarea { resize: vertical; line-height: 1.5; }
+  @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+</style>
+</helmet>
+
+<div style="background:#f4f0e6;color:#1a1713;font-family:Newsreader,Georgia,serif;min-height:100vh">
+
+  <sc-if value="{{ isShop }}" hint-placeholder-val="{{ true }}">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:24px;padding:20px clamp(20px,5vw,64px);border-bottom:1px solid #1a1713;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;position:sticky;top:0;background:#f4f0e6;z-index:5">
+    <div style="display:flex;gap:10px;align-items:baseline;cursor:pointer" onClick="{{ goHome }}">
+      <span style="font-family:'Instrument Serif',serif;font-size:22px;letter-spacing:0;text-transform:none">{{ shopName }}</span>
+      <span style="opacity:.5">est. 2026</span>
+    </div>
+    <div style="display:flex;gap:clamp(14px,3vw,32px);align-items:baseline">
+      <span style="cursor:pointer" onClick="{{ goAbout }}">Sobre</span>
+      <span style="cursor:pointer;opacity:.45" onClick="{{ goAdmin }}">Admin</span>
+      <span style="cursor:pointer;border-bottom:1px solid #1a1713" onClick="{{ openCart }}">Sacola ({{ cartCount }})</span>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+  <div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));border-bottom:1px solid #1a1713">
+      <div style="padding:clamp(32px,6vw,72px);display:flex;flex-direction:column;justify-content:space-between;gap:40px;border-right:1px solid #1a1713">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6;margin-bottom:24px">Um portfólio disfarçado de loja</div>
+          <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(44px,7vw,86px);line-height:.98;margin:0 0 24px;text-wrap:balance">Coisas que eu<br><em>faço com as mãos</em>, à venda de verdade.</h1>
+          <p style="font-size:clamp(17px,1.6vw,20px);line-height:1.55;max-width:44ch;margin:0;opacity:.8;text-wrap:pretty">Cartas escritas à mão, desenhos, e o que mais eu resolver aprender. Cada compra passa pelo Stripe e chega pelo correio. Sou desenvolvedor — este site também é uma peça do catálogo.</p>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase">
+          <span style="background:#1a1713;color:#f4f0e6;padding:14px 26px;border-radius:999px;cursor:pointer" style-hover="background:#a63d20" onClick="{{ openFeatured }}">Ver a peça em destaque</span>
+          <span style="opacity:.55">Envio para todo o Brasil</span>
+        </div>
+      </div>
+      <div style="position:relative;min-height:min(66vh,540px)">
+        <image-slot id="hero" shape="rect" fit="cover" placeholder="Foto da peça em destaque"></image-slot>
+        <div style="position:absolute;left:clamp(16px,3vw,28px);bottom:clamp(16px,3vw,28px);background:#f4f0e6;border:1px solid #1a1713;padding:16px 20px;max-width:min(300px,72%);pointer-events:none">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.6">Em destaque</div>
+          <div style="font-family:'Instrument Serif',serif;font-size:26px;line-height:1.1;margin-top:6px">{{ featuredName }}</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:8px">{{ featuredNote }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:baseline;padding:22px clamp(20px,5vw,64px) 14px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase">
+      <span>O catálogo inteiro</span>
+      <span style="opacity:.5">{{ catalogCount }}</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1px;background:#1a1713;border-top:1px solid #1a1713;border-bottom:1px solid #1a1713">
+      <sc-for list="{{ products }}" as="p" hint-placeholder-count="4">
+        <div style="background:#f4f0e6;padding:18px 18px 22px;display:flex;flex-direction:column;gap:14px;cursor:pointer" style-hover="background:#efe9db" onClick="{{ p.open }}">
+          <div style="position:relative;aspect-ratio:4/5">
+            <image-slot id="{{ p.slot }}" shape="rect" fit="cover" placeholder="{{ p.name }}"></image-slot>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+            <div>
+              <div style="font-family:'Instrument Serif',serif;font-size:24px;line-height:1.15">{{ p.name }}</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.55;margin-top:6px">{{ p.meta }}</div>
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;white-space:nowrap">{{ p.priceLabel }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="padding:clamp(40px,7vw,80px) clamp(20px,5vw,64px);display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:clamp(28px,5vw,64px);align-items:start">
+      <div style="font-family:'Instrument Serif',serif;font-size:clamp(28px,3.4vw,42px);line-height:1.12;text-wrap:balance">Feito por uma pessoa só, do desenho ao checkout.</div>
+      <p style="margin:0;font-size:17px;line-height:1.6;opacity:.8;max-width:46ch;text-wrap:pretty">Eu escrevo, desenho, embalo e despacho. Também escrevi o carrinho, a integração de pagamento e esta página. Se o que você precisa é a segunda parte, <a href="#" style="border-bottom:1px solid #1a1713">me manda uma mensagem</a>.</p>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isProduct }}" hint-placeholder-val="{{ false }}">
+  <div style="animation:riseIn .3s ease both">
+    <div style="padding:16px clamp(20px,5vw,64px);border-bottom:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.7">
+      <span style="cursor:pointer" onClick="{{ goHome }}">← Catálogo</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));border-bottom:1px solid #1a1713">
+      <div style="border-right:1px solid #1a1713;background:#efe9db;padding:clamp(24px,4vw,56px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+        <div style="position:relative;width:100%;max-width:400px;aspect-ratio:4/5;border:1px solid rgba(26,23,19,.2);background:#f4f0e6">
+          <image-slot id="{{ prod.slot }}" shape="rect" fit="contain" placeholder="{{ prod.name }}"></image-slot>
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;width:100%;max-width:400px">
+          <div style="position:relative;flex:1;aspect-ratio:1/1;max-width:140px;border:1px solid rgba(26,23,19,.2);background:#f4f0e6">
+            <image-slot id="{{ prod.slotB }}" shape="rect" fit="cover" placeholder="Detalhe"></image-slot>
+          </div>
+          <div style="position:relative;flex:1;aspect-ratio:1/1;max-width:140px;border:1px solid rgba(26,23,19,.2);background:#f4f0e6">
+            <image-slot id="{{ prod.slotC }}" shape="rect" fit="cover" placeholder="Embalagem"></image-slot>
+          </div>
+        </div>
+      </div>
+      <div style="padding:clamp(28px,5vw,64px);display:flex;flex-direction:column;gap:28px">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6">{{ prod.meta }}</div>
+          <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(36px,5vw,60px);line-height:1.02;margin:14px 0 18px">{{ prod.name }}</h1>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:18px">{{ prod.priceLabel }}</div>
+        </div>
+        <p style="margin:0;font-size:18px;line-height:1.6;opacity:.85;max-width:46ch;text-wrap:pretty">{{ prod.desc }}</p>
+        <div style="display:flex;flex-direction:column;gap:1px;background:#1a1713;border:1px solid #1a1713">
+          <sc-for list="{{ prod.specs }}" as="s" hint-placeholder-count="3">
+            <div style="background:#f4f0e6;display:flex;justify-content:space-between;gap:16px;padding:11px 14px;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.04em">
+              <span style="opacity:.55;text-transform:uppercase">{{ s.k }}</span>
+              <span style="text-align:right">{{ s.v }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase">
+          <span style="background:#1a1713;color:#f4f0e6;padding:15px 30px;border-radius:999px;cursor:pointer" style-hover="background:#a63d20" onClick="{{ addProd }}">Colocar na sacola</span>
+          <span style="opacity:.55">{{ prod.stockLabel }}</span>
+        </div>
+        <div style="border-top:1px solid rgba(26,23,19,.25);padding-top:20px;font-size:16px;line-height:1.55;opacity:.75;max-width:44ch;text-wrap:pretty">Escrito, embalado e despachado por mim, em até 5 dias úteis. Pagamento processado pelo Stripe.</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isAbout }}" hint-placeholder-val="{{ false }}">
+  <div style="animation:riseIn .3s ease both">
+    <div style="padding:16px clamp(20px,5vw,64px);border-bottom:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.7">
+      <span style="cursor:pointer" onClick="{{ goHome }}">← Catálogo</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));border-bottom:1px solid #1a1713">
+      <div style="padding:clamp(32px,6vw,72px);border-right:1px solid #1a1713;display:flex;flex-direction:column;justify-content:center;gap:22px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6">Sobre</div>
+        <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(38px,6vw,74px);line-height:1;margin:0;text-wrap:balance">Uma loja de quatro peças, <em>escrita à mão</em> nos dois sentidos.</h1>
+        <p style="margin:0;font-size:clamp(17px,1.6vw,20px);line-height:1.55;max-width:44ch;opacity:.8;text-wrap:pretty">Sou Augusto. Desenvolvedor de dia, e nas horas vagas alguém que escreve cartas, desenha a nanquim e borda marcadores de página. Esta loja existe porque eu queria construir uma loja — e achei mais honesto vender coisas que eu realmente faço.</p>
+      </div>
+      <div style="position:relative;min-height:min(56vh,460px)">
+        <image-slot id="about-portrait" shape="rect" fit="cover" placeholder="Foto sua ou da bancada"></image-slot>
+      </div>
+    </div>
+
+    <div style="padding:clamp(36px,6vw,80px) clamp(20px,5vw,64px);display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:clamp(28px,4vw,56px);max-width:1240px;margin:0 auto">
+      <sc-for list="{{ aboutBlocks }}" as="b" hint-placeholder-count="3">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.5;padding-bottom:12px;border-bottom:1px solid #1a1713;margin-bottom:16px">{{ b.tag }}</div>
+          <h2 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(24px,2.6vw,32px);line-height:1.12;margin:0 0 12px">{{ b.title }}</h2>
+          <p style="margin:0;font-size:17px;line-height:1.6;opacity:.8;text-wrap:pretty">{{ b.body }}</p>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="border-top:1px solid #1a1713;border-bottom:1px solid #1a1713;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:#1a1713">
+      <sc-for list="{{ aboutFacts }}" as="f" hint-placeholder-count="4">
+        <div style="background:#f4f0e6;padding:26px clamp(18px,3vw,32px)">
+          <div style="font-family:'Instrument Serif',serif;font-size:clamp(30px,3.4vw,42px);line-height:1">{{ f.v }}</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.55;margin-top:10px">{{ f.k }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="padding:clamp(40px,7vw,88px) clamp(20px,5vw,64px);display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:clamp(28px,5vw,64px);align-items:start;max-width:1240px;margin:0 auto">
+      <div style="font-family:'Instrument Serif',serif;font-size:clamp(28px,3.4vw,44px);line-height:1.1;text-wrap:balance">Se você chegou aqui pelo código, e não pela carta.</div>
+      <div style="display:flex;flex-direction:column;gap:20px;max-width:46ch">
+        <p style="margin:0;font-size:17px;line-height:1.6;opacity:.8;text-wrap:pretty">Este site é o portfólio: a vitrine, a página de produto, a sacola, o checkout e a integração de pagamento foram construídos por mim, do zero. O nome é uma piada sobre isso — um portfólio feito à mão, que por acaso também vende coisas feitas à mão.</p>
+        <p style="margin:0;font-size:17px;line-height:1.6;opacity:.8;text-wrap:pretty">Aceito conversas sobre produto, interface e sistemas web. Também aceito encomendas de carta.</p>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase">
+          <a href="#" style="background:#1a1713;color:#f4f0e6;padding:14px 26px;border-radius:999px" style-hover="background:#a63d20">Falar comigo</a>
+          <span style="border:1px solid #1a1713;padding:14px 26px;border-radius:999px;cursor:pointer" style-hover="background:#e6dfcd" onClick="{{ goHome }}">Ver o catálogo</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isCheckout }}" hint-placeholder-val="{{ false }}">
+  <div style="animation:riseIn .3s ease both">
+    <div style="padding:16px clamp(20px,5vw,64px);border-bottom:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <span style="cursor:pointer;opacity:.7" onClick="{{ openCart }}">← Voltar para a sacola</span>
+      <span style="opacity:.5">Pagamento seguro via Stripe</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));align-items:start">
+      <div style="padding:clamp(28px,5vw,64px);border-right:1px solid #1a1713;display:flex;flex-direction:column;gap:clamp(28px,4vw,44px)">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6">Finalizar pedido</div>
+          <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(34px,4.6vw,56px);line-height:1.02;margin:12px 0 0">Para onde eu mando, e para quem.</h1>
+        </div>
+
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">01 · Quem está comprando</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+            <input placeholder="Nome completo">
+            <input placeholder="E-mail" type="email">
+            <input placeholder="Telefone / WhatsApp">
+            <input placeholder="CPF (para a nota fiscal)">
+          </div>
+        </div>
+
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">02 · Endereço de entrega</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+            <input placeholder="CEP">
+            <input placeholder="Número">
+            <input placeholder="Complemento">
+            <input placeholder="Rua / logradouro" style="grid-column:1/-1">
+            <input placeholder="Bairro">
+            <input placeholder="Cidade">
+            <input placeholder="Estado">
+            <input placeholder="País" value="Brasil">
+          </div>
+        </div>
+
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">03 · Envio</div>
+          <div style="display:flex;flex-direction:column;gap:1px;background:#1a1713;border:1px solid #1a1713">
+            <sc-for list="{{ shipOptions }}" as="o" hint-placeholder-count="2">
+              <div style="background:#f4f0e6;padding:14px 16px;display:flex;justify-content:space-between;gap:16px;align-items:center;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px" style-hover="background:#efe9db" onClick="{{ o.pick }}">
+                <span style="display:flex;gap:12px;align-items:center">
+                  <sc-if value="{{ o.on }}" hint-placeholder-val="{{ false }}">
+                    <span style="width:11px;height:11px;border-radius:50%;background:#1a1713;flex:none"></span>
+                  </sc-if>
+                  <sc-if value="{{ o.off }}" hint-placeholder-val="{{ true }}">
+                    <span style="width:11px;height:11px;border-radius:50%;border:1px solid rgba(26,23,19,.5);flex:none"></span>
+                  </sc-if>
+                  <span style="font-family:Newsreader,serif;font-size:17px">{{ o.name }}</span>
+                </span>
+                <span style="display:flex;gap:14px;align-items:baseline;white-space:nowrap">
+                  <span style="opacity:.55">{{ o.eta }}</span>
+                  <span>{{ o.priceLabel }}</span>
+                </span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">04 · Sobre o pedido</div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <textarea rows="4" placeholder="Notas para mim: o assunto da carta, o nome de quem vai receber, prazos, qualquer coisa."></textarea>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+              <input placeholder="É presente? Mensagem no cartão">
+              <input placeholder="Como me encontrou? (opcional)">
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">05 · Pagamento</div>
+          <div style="border:1px solid #1a1713;padding:18px;display:flex;gap:14px;align-items:flex-start">
+            <span style="width:11px;height:11px;border-radius:50%;background:#1a1713;margin-top:7px;flex:none"></span>
+            <div>
+              <div style="font-family:'Instrument Serif',serif;font-size:22px">Stripe Checkout</div>
+              <div style="font-size:16px;line-height:1.5;opacity:.75;margin-top:5px;text-wrap:pretty">Cartão, Pix ou boleto na página segura do Stripe. Nada de dado de cartão passa por aqui — você volta para cá com o pedido confirmado.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:clamp(28px,5vw,64px);position:sticky;top:80px;display:flex;flex-direction:column;gap:22px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55">Seu pedido</div>
+        <div style="display:flex;flex-direction:column;gap:1px;background:#1a1713;border:1px solid #1a1713">
+          <sc-if value="{{ cartEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="background:#f4f0e6;padding:22px;font-family:'Instrument Serif',serif;font-size:22px;opacity:.6">A sacola está vazia.</div>
+          </sc-if>
+          <sc-for list="{{ cartLines }}" as="l" hint-placeholder-count="2">
+            <div style="background:#f4f0e6;padding:16px 18px;display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+              <div>
+                <div style="font-family:'Instrument Serif',serif;font-size:20px;line-height:1.2">{{ l.name }}</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;opacity:.55;margin-top:5px">{{ l.qty }} × {{ l.unitLabel }} · {{ l.typeLabel }}</div>
+              </div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;white-space:nowrap">{{ l.lineLabel }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;font-family:'IBM Plex Mono',monospace;font-size:13px">
+          <div style="display:flex;justify-content:space-between"><span style="opacity:.6">Subtotal</span><span>{{ subtotalLabel }}</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="opacity:.6">Frete ({{ shipName }})</span><span>{{ shippingLabel }}</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:17px;border-top:1px solid #1a1713;padding-top:14px"><span>Total</span><span>{{ totalLabel }}</span></div>
+        </div>
+        <span style="background:#1a1713;color:#f4f0e6;padding:17px 0;border-radius:999px;text-align:center;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase" style-hover="background:#a63d20" onClick="{{ toDone }}">Pagar {{ totalLabel }}</span>
+        <div style="font-size:15px;line-height:1.5;opacity:.7;text-wrap:pretty">Ao continuar você aceita que eu comece a produzir a peça. Prazo de produção conta a partir da confirmação do pagamento.</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+  <div style="padding:clamp(48px,9vw,120px) clamp(20px,5vw,64px);max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:22px;animation:riseIn .35s ease both">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6">Pedido #MHP-{{ orderNo }}</div>
+    <div style="font-family:'Instrument Serif',serif;font-size:clamp(40px,6vw,74px);line-height:1.02">Pedido feito.<br><em>Agora é minha vez.</em></div>
+    <p style="margin:0;font-size:19px;line-height:1.55;opacity:.8;text-wrap:pretty">Mandei a confirmação por e-mail, e mando o código de rastreio quando despachar. Se você chegou aqui pelo lado técnico da coisa: este fluxo inteiro é o portfólio.</p>
+    <div style="display:flex;flex-direction:column;gap:1px;background:#1a1713;border:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:13px">
+      <div style="background:#f4f0e6;padding:14px 16px;display:flex;justify-content:space-between"><span style="opacity:.6">Total pago</span><span>{{ totalLabel }}</span></div>
+      <div style="background:#f4f0e6;padding:14px 16px;display:flex;justify-content:space-between"><span style="opacity:.6">Envio</span><span>{{ shipName }}</span></div>
+      <div style="background:#f4f0e6;padding:14px 16px;display:flex;justify-content:space-between"><span style="opacity:.6">Prazo estimado</span><span>{{ shipEta }}</span></div>
+    </div>
+    <span style="border:1px solid #1a1713;padding:15px 32px;border-radius:999px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;width:max-content" style-hover="background:#e6dfcd" onClick="{{ goHome }}">Voltar ao catálogo</span>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isAdmin }}" hint-placeholder-val="{{ false }}">
+  <div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px clamp(16px,4vw,40px);background:#1a1713;color:#f4f0e6;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;position:sticky;top:0;z-index:5">
+      <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+        <span style="font-family:'Instrument Serif',serif;font-size:19px;letter-spacing:0;text-transform:none">{{ shopName }}</span>
+        <span style="opacity:.5">Painel</span>
+      </div>
+      <div style="display:flex;gap:clamp(14px,3vw,26px);align-items:center">
+        <span style="cursor:pointer;border-bottom:1px solid rgba(244,240,230,.35)" onClick="{{ goAdminProducts }}">Produtos</span>
+        <span style="cursor:pointer;border-bottom:1px solid rgba(244,240,230,.35)" onClick="{{ goAdminOrders }}">Pedidos</span>
+        <span style="cursor:pointer;opacity:.6" onClick="{{ goHome }}">Ver a loja ↗</span>
+      </div>
+    </div>
+
+    <sc-if value="{{ adminList }}" hint-placeholder-val="{{ true }}">
+    <div>
+      <div style="padding:clamp(26px,4vw,44px) clamp(16px,4vw,40px) 20px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;border-bottom:1px solid #1a1713">
+        <div>
+          <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(30px,4vw,48px);line-height:1;margin:0">Produtos</h1>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.55;margin-top:10px">{{ adminSummary }}</div>
+        </div>
+        <span style="background:#1a1713;color:#f4f0e6;padding:14px 26px;border-radius:999px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase" style-hover="background:#a63d20" onClick="{{ newItem }}">+ Novo produto</span>
+      </div>
+
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <div style="min-width:900px">
+      <div style="display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 110px 90px 120px 130px;gap:16px;padding:12px clamp(16px,4vw,40px);font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.5;border-bottom:1px solid #1a1713">
+        <span>Produto</span><span>Idiomas</span><span>Preço</span><span>Estoque</span><span>Tipo</span><span>Situação</span>
+      </div>
+
+      <sc-for list="{{ adminItems }}" as="it" hint-placeholder-count="4">
+        <div style="display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 110px 90px 120px 130px;gap:16px;padding:18px clamp(16px,4vw,40px);border-bottom:1px solid rgba(26,23,19,.2);align-items:center;font-family:'IBM Plex Mono',monospace;font-size:13px">
+          <div style="min-width:0">
+            <div style="font-family:'Instrument Serif',serif;font-size:22px;line-height:1.15;cursor:pointer" style-hover="color:#a63d20" onClick="{{ it.edit }}">{{ it.namePt }}</div>
+            <div style="font-size:11px;opacity:.5;margin-top:4px">{{ it.nameEn }} · {{ it.slug }}</div>
+          </div>
+          <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase">
+            <sc-if value="{{ it.i18nOk }}" hint-placeholder-val="{{ true }}">
+              <span style="opacity:.6">PT ✓ &nbsp; EN ✓</span>
+            </sc-if>
+            <sc-if value="{{ it.i18nMissing }}" hint-placeholder-val="{{ false }}">
+              <span style="color:#a63d20">{{ it.i18nLabel }}</span>
+            </sc-if>
+          </div>
+          <div>{{ it.priceLabel }}</div>
+          <div>{{ it.stock }}</div>
+          <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.7">{{ it.typeLabel }}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+            <sc-if value="{{ it.active }}" hint-placeholder-val="{{ true }}">
+              <span style="background:#1a1713;color:#f4f0e6;padding:5px 12px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer" onClick="{{ it.toggle }}">Ativo</span>
+            </sc-if>
+            <sc-if value="{{ it.inactive }}" hint-placeholder-val="{{ false }}">
+              <span style="border:1px solid rgba(26,23,19,.4);padding:4px 11px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;opacity:.6;cursor:pointer" onClick="{{ it.toggle }}">Inativo</span>
+            </sc-if>
+            <div style="display:flex;gap:10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase">
+              <span style="cursor:pointer;border-bottom:1px solid #1a1713" onClick="{{ it.edit }}">Editar</span>
+              <span style="cursor:pointer;color:#a63d20" onClick="{{ it.remove }}">Apagar</span>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+      </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ adminForm }}" hint-placeholder-val="{{ false }}">
+    <div style="animation:riseIn .25s ease both">
+      <div style="padding:clamp(26px,4vw,44px) clamp(16px,4vw,40px) 20px;border-bottom:1px solid #1a1713;display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;margin-bottom:10px">{{ formTag }}</div>
+          <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(30px,4vw,48px);line-height:1;margin:0">{{ formTitle }}</h1>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.55;max-width:34ch;text-align:right">Os dois idiomas são obrigatórios. A loja mostra PT; a versão EN é usada na tradução do site.</div>
+      </div>
+
+      <div style="padding:clamp(24px,4vw,44px) clamp(16px,4vw,40px);display:flex;flex-direction:column;gap:clamp(26px,4vw,40px);max-width:1180px">
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px">
+          <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Identificador
+            <input value="{{ f.slug.value }}" onChange="{{ f.slug.onChange }}" placeholder="carta-escrita">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Preço (R$)
+            <input type="number" value="{{ f.price.value }}" onChange="{{ f.price.onChange }}">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Estoque
+            <input type="number" value="{{ f.stock.value }}" onChange="{{ f.stock.onChange }}">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Tipo
+            <select value="{{ f.type.value }}" onChange="{{ f.type.onChange }}">
+              <option value="fisico">Físico</option>
+              <option value="digital">Digital</option>
+            </select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Situação
+            <select value="{{ f.active.value }}" onChange="{{ f.active.onChange }}">
+              <option value="sim">Ativo na loja</option>
+              <option value="nao">Desabilitado</option>
+            </select>
+          </label>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(20px,3vw,36px)">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid #1a1713">Português</div>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Nome
+              <input value="{{ f.namePt.value }}" onChange="{{ f.namePt.onChange }}">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Subdescrição
+              <input value="{{ f.subPt.value }}" onChange="{{ f.subPt.onChange }}" placeholder="Papel algodão · 2 folhas">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Descrição
+              <textarea rows="6" value="{{ f.descPt.value }}" onChange="{{ f.descPt.onChange }}"></textarea>
+            </label>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid #1a1713">English</div>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Name
+              <input value="{{ f.nameEn.value }}" onChange="{{ f.nameEn.onChange }}">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Subtitle
+              <input value="{{ f.subEn.value }}" onChange="{{ f.subEn.onChange }}" placeholder="Cotton paper · 2 sheets">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Description
+              <textarea rows="6" value="{{ f.descEn.value }}" onChange="{{ f.descEn.onChange }}"></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:18px">
+            <span>Fotos</span>
+            <span style="cursor:pointer;border-bottom:1px solid #1a1713;letter-spacing:.08em" onClick="{{ addPhoto }}">+ Adicionar foto</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:clamp(14px,2vw,22px)">
+            <sc-for list="{{ photoRows }}" as="ph" hint-placeholder-count="3">
+              <div style="border:1px solid #1a1713;padding:14px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.6">
+                  <span>{{ ph.label }}</span>
+                  <span style="cursor:pointer;color:#a63d20;opacity:1;font-size:13px" onClick="{{ ph.remove }}">✕</span>
+                </div>
+                <div style="position:relative;width:100%;aspect-ratio:4/5;background:#efe9db">
+                  <image-slot id="{{ ph.slotId }}" shape="rect" fit="cover" placeholder="Arraste a foto"></image-slot>
+                </div>
+                <label style="display:flex;flex-direction:column;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Alt (PT)
+                  <input value="{{ ph.altPt.value }}" onChange="{{ ph.altPt.onChange }}" placeholder="Descrição da imagem">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.75">Alt (EN)
+                  <input value="{{ ph.altEn.value }}" onChange="{{ ph.altEn.onChange }}" placeholder="Image description">
+                </label>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:16px">
+            <span>Dados · chave e valor</span>
+            <span style="cursor:pointer;border-bottom:1px solid #1a1713;letter-spacing:.08em" onClick="{{ addSpec }}">+ Adicionar linha</span>
+          </div>
+          <div style="display:flex;gap:clamp(16px,3vw,36px);flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.6;margin-bottom:12px">
+            <span style="flex:1;min-width:240px">Português</span>
+            <span style="flex:1;min-width:240px">English</span>
+            <span style="width:20px"></span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <sc-for list="{{ specRows }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;gap:clamp(16px,3vw,36px);flex-wrap:wrap;align-items:center">
+                <div style="flex:1;min-width:240px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                  <input value="{{ r.kPt.value }}" onChange="{{ r.kPt.onChange }}" placeholder="Chave">
+                  <input value="{{ r.vPt.value }}" onChange="{{ r.vPt.onChange }}" placeholder="Valor">
+                </div>
+                <div style="flex:1;min-width:240px;display:grid;grid-template-columns:1fr 1fr;gap:10px;border-left:1px solid rgba(26,23,19,.25);padding-left:clamp(12px,2vw,24px)">
+                  <input value="{{ r.kEn.value }}" onChange="{{ r.kEn.onChange }}" placeholder="Key">
+                  <input value="{{ r.vEn.value }}" onChange="{{ r.vEn.onChange }}" placeholder="Value">
+                </div>
+                <span style="width:20px;text-align:center;cursor:pointer;font-size:14px;color:#a63d20" onClick="{{ r.remove }}">✕</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;border-top:1px solid #1a1713;padding-top:24px;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase">
+          <span style="background:#1a1713;color:#f4f0e6;padding:15px 30px;border-radius:999px;cursor:pointer" style-hover="background:#a63d20" onClick="{{ saveDraft }}">Salvar produto</span>
+          <span style="border:1px solid #1a1713;padding:15px 30px;border-radius:999px;cursor:pointer" style-hover="background:#e6dfcd" onClick="{{ cancelDraft }}">Cancelar</span>
+          <sc-if value="{{ formEditing }}" hint-placeholder-val="{{ false }}">
+            <span style="cursor:pointer;color:#a63d20;margin-left:auto;border-bottom:1px solid #a63d20" onClick="{{ removeDraft }}">Apagar este produto</span>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ adminOrders }}" hint-placeholder-val="{{ false }}">
+    <div style="animation:riseIn .25s ease both">
+      <div style="padding:clamp(26px,4vw,44px) clamp(16px,4vw,40px) 20px;border-bottom:1px solid #1a1713">
+        <h1 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(30px,4vw,48px);line-height:1;margin:0">Pedidos</h1>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.55;margin-top:10px">{{ ordersSummary }}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+        <div style="border-right:1px solid #1a1713">
+          <sc-for list="{{ orders }}" as="o" hint-placeholder-count="4">
+            <div style="padding:18px clamp(16px,4vw,32px);border-bottom:1px solid rgba(26,23,19,.2);cursor:pointer;display:flex;flex-direction:column;gap:8px" style-hover="background:#efe9db" onClick="{{ o.select }}">
+              <div style="display:flex;justify-content:space-between;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.6">
+                <span>{{ o.code }}</span>
+                <span>{{ o.date }}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:14px;align-items:baseline">
+                <span style="font-family:'Instrument Serif',serif;font-size:22px;line-height:1.15">{{ o.customer }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:14px;white-space:nowrap">{{ o.totalLabel }}</span>
+              </div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.55">{{ o.itemsLabel }} · {{ o.status }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding:clamp(24px,4vw,40px);display:flex;flex-direction:column;gap:26px">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.55">{{ order.code }} · {{ order.date }}</div>
+            <h2 style="font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(28px,3.4vw,40px);line-height:1.05;margin:10px 0 0">{{ order.customer }}</h2>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.06em;margin-top:10px">{{ order.status }} · {{ order.payment }}</div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:1px;background:#1a1713;border:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:12px">
+            <sc-for list="{{ order.contact }}" as="c" hint-placeholder-count="3">
+              <div style="background:#f4f0e6;padding:12px 14px;display:flex;justify-content:space-between;gap:16px">
+                <span style="opacity:.55;text-transform:uppercase;letter-spacing:.1em">{{ c.k }}</span>
+                <span style="text-align:right">{{ c.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:14px">Entrega</div>
+            <div style="font-size:17px;line-height:1.55;opacity:.85;text-wrap:pretty">{{ order.address }}</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:10px;opacity:.6">{{ order.shipping }}</div>
+          </div>
+
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:14px">Itens</div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <sc-for list="{{ order.items }}" as="i" hint-placeholder-count="2">
+                <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+                  <span style="font-family:'Instrument Serif',serif;font-size:20px">{{ i.name }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;white-space:nowrap">{{ i.qty }} × {{ i.unitLabel }}</span>
+                </div>
+              </sc-for>
+              <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(26,23,19,.3);padding-top:12px;font-family:'IBM Plex Mono',monospace;font-size:15px"><span>Total</span><span>{{ order.totalLabel }}</span></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;padding-bottom:10px;border-bottom:1px solid #1a1713;margin-bottom:14px">Notas do cliente</div>
+            <div style="font-size:17px;line-height:1.6;opacity:.85;text-wrap:pretty">{{ order.notes }}</div>
+          </div>
+
+          <div style="display:flex;gap:12px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase">
+            <span style="background:#1a1713;color:#f4f0e6;padding:13px 24px;border-radius:999px;cursor:pointer" style-hover="background:#a63d20">Marcar como despachado</span>
+            <span style="border:1px solid #1a1713;padding:13px 24px;border-radius:999px;cursor:pointer" style-hover="background:#e6dfcd">Responder por e-mail</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;inset:0;z-index:20">
+    <div style="position:absolute;inset:0;background:rgba(26,23,19,.42);animation:scrimIn .25s ease both" onClick="{{ closeDrawer }}"></div>
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,100%);background:#f4f0e6;border-left:1px solid #1a1713;display:flex;flex-direction:column;animation:drawerIn .3s cubic-bezier(.2,.8,.2,1) both;box-shadow:-24px 0 60px rgba(26,23,19,.18)">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:20px 24px;border-bottom:1px solid #1a1713;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase">
+        <span>Sua sacola</span>
+        <span style="cursor:pointer;font-size:18px;letter-spacing:0" onClick="{{ closeDrawer }}">✕</span>
+      </div>
+      <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
+        <sc-if value="{{ cartEmpty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:40px 24px;font-family:'Instrument Serif',serif;font-size:26px;line-height:1.2;opacity:.6">A sacola está vazia.</div>
+        </sc-if>
+        <sc-for list="{{ cartLines }}" as="l" hint-placeholder-count="2">
+          <div style="display:grid;grid-template-columns:72px 1fr auto;gap:16px;padding:20px 24px;border-bottom:1px solid rgba(26,23,19,.2);align-items:start">
+            <div style="width:72px;height:90px;border:1px solid rgba(26,23,19,.35);background:#e9e2d1;display:flex;align-items:center;justify-content:center;font-family:'Instrument Serif',serif;font-size:26px;opacity:.4">{{ l.initial }}</div>
+            <div style="min-width:0">
+              <div style="font-family:'Instrument Serif',serif;font-size:21px;line-height:1.15">{{ l.name }}</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;opacity:.55;margin-top:5px">{{ l.meta }}</div>
+              <div style="display:flex;align-items:center;gap:1px;margin-top:12px;border:1px solid #1a1713;width:max-content;font-family:'IBM Plex Mono',monospace;font-size:13px">
+                <span style="padding:5px 11px;cursor:pointer" style-hover="background:#e6dfcd" onClick="{{ l.dec }}">−</span>
+                <span style="padding:5px 8px;border-left:1px solid #1a1713;border-right:1px solid #1a1713;min-width:28px;text-align:center">{{ l.qty }}</span>
+                <span style="padding:5px 11px;cursor:pointer" style-hover="background:#e6dfcd" onClick="{{ l.inc }}">+</span>
+              </div>
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;white-space:nowrap">{{ l.lineLabel }}</div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border-top:1px solid #1a1713;padding:20px 24px;display:flex;flex-direction:column;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:13px">
+        <div style="display:flex;justify-content:space-between"><span style="opacity:.6">Subtotal</span><span>{{ subtotalLabel }}</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="opacity:.6">Frete</span><span>{{ shippingLabel }}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:16px;border-top:1px solid rgba(26,23,19,.25);padding-top:14px"><span>Total</span><span>{{ totalLabel }}</span></div>
+        <span style="background:#1a1713;color:#f4f0e6;padding:15px 0;border-radius:999px;text-align:center;cursor:pointer;font-size:12px;letter-spacing:.1em;text-transform:uppercase;margin-top:4px" style-hover="background:#a63d20" onClick="{{ goCheckout }}">Ir para o pagamento</span>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;shopName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;My Handmade Portfolio&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;featured&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;carta&quot;,&quot;nanquim&quot;,&quot;retrato&quot;,&quot;marcador&quot;],&quot;default&quot;:&quot;retrato&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Loja&quot;},&quot;shipping&quot;:{&quot;editor&quot;:null,&quot;default&quot;:22,&quot;tsType&quot;:&quot;number&quot;}}">
+const SEED = [
+  { id: "carta", slug: "carta-escrita", active: true, type: "fisico", price: 45, stock: 12,
+    pt: { name: "Carta escrita à mão", sub: "Papel algodão · 2 folhas",
+      desc: "Você me diz o assunto e para quem é. Eu escrevo à mão, em tinta preta, e mando pelo correio dentro de um envelope lacrado com cera." },
+    en: { name: "Handwritten letter", sub: "Cotton paper · 2 sheets",
+      desc: "You tell me the subject and who it is for. I write it by hand in black ink and post it in a wax-sealed envelope." },
+    specs: [
+      { kPt: "Formato", vPt: "A5, 2 folhas", kEn: "Format", vEn: "A5, 2 sheets" },
+      { kPt: "Papel", vPt: "Algodão 180g", kEn: "Paper", vEn: "180gsm cotton" },
+      { kPt: "Tinta", vPt: "Nanquim preto", kEn: "Ink", vEn: "Black India ink" },
+      { kPt: "Prazo", vPt: "5 dias úteis", kEn: "Lead time", vEn: "5 business days" }
+    ] },
+  { id: "nanquim", slug: "desenho-nanquim", active: true, type: "fisico", price: 120, stock: 4,
+    pt: { name: "Desenho a nanquim", sub: "A5 · original",
+      desc: "Desenho original em nanquim sobre papel de algodão. Não é impressão: é a folha em que eu desenhei, com as imperfeições que vêm com isso." },
+    en: { name: "India ink drawing", sub: "A5 · original",
+      desc: "An original India ink drawing on cotton paper. Not a print: the actual sheet I drew on, imperfections included." },
+    specs: [
+      { kPt: "Formato", vPt: "A5 (14,8 × 21 cm)", kEn: "Format", vEn: "A5 (5.8 × 8.3 in)" },
+      { kPt: "Técnica", vPt: "Nanquim sobre algodão", kEn: "Medium", vEn: "India ink on cotton" },
+      { kPt: "Peça", vPt: "Original, única", kEn: "Edition", vEn: "One of one" },
+      { kPt: "Prazo", vPt: "3 dias úteis", kEn: "Lead time", vEn: "3 business days" }
+    ] },
+  { id: "retrato", slug: "retrato-lapis", active: true, type: "fisico", price: 180, stock: 2,
+    pt: { name: "Retrato a lápis", sub: "A4 · sob encomenda",
+      desc: "Você manda uma foto, eu desenho a lápis grafite. Mando uma prévia antes de finalizar, e ajusto o que você quiser." },
+    en: { name: "Pencil portrait", sub: "A4 · made to order",
+      desc: "Send me a photo and I draw it in graphite. You get a preview before I finish, and I adjust whatever you ask." },
+    specs: [
+      { kPt: "Formato", vPt: "A4 (21 × 29,7 cm)", kEn: "Format", vEn: "A4 (8.3 × 11.7 in)" },
+      { kPt: "Técnica", vPt: "Grafite 2H–6B", kEn: "Medium", vEn: "2H–6B graphite" },
+      { kPt: "Prévia", vPt: "Inclusa", kEn: "Preview", vEn: "Included" },
+      { kPt: "Prazo", vPt: "10 dias úteis", kEn: "Lead time", vEn: "10 business days" }
+    ] },
+  { id: "marcador", slug: "marcador-bordado", active: true, type: "fisico", price: 25, stock: 20,
+    pt: { name: "Marcador bordado", sub: "Linha de algodão",
+      desc: "Bordado à mão em linha de algodão sobre feltro. O menor item da loja, e o que eu faço enquanto penso em outra coisa." },
+    en: { name: "Embroidered bookmark", sub: "Cotton thread",
+      desc: "Hand-embroidered in cotton thread on felt. The smallest item in the shop, and the one I make while thinking about something else." },
+    specs: [
+      { kPt: "Formato", vPt: "5 × 16 cm", kEn: "Format", vEn: "2 × 6.3 in" },
+      { kPt: "Material", vPt: "Feltro e algodão", kEn: "Material", vEn: "Felt and cotton" },
+      { kPt: "Cores", vPt: "Sob consulta", kEn: "Colours", vEn: "On request" },
+      { kPt: "Prazo", vPt: "4 dias úteis", kEn: "Lead time", vEn: "4 business days" }
+    ] },
+  { id: "guia", slug: "guia-nanquim-pdf", active: false, type: "digital", price: 18, stock: 999,
+    pt: { name: "Guia de nanquim (PDF)", sub: "Download · 24 páginas",
+      desc: "Um guia curto de como eu começo um desenho a nanquim: materiais, traço e os erros que eu cometi primeiro. Ainda em revisão." },
+    en: { name: "India ink guide (PDF)", sub: "Download · 24 pages",
+      desc: "A short guide to how I start an ink drawing: materials, line work, and the mistakes I made first. Still being revised." },
+    specs: [
+      { kPt: "Arquivo", vPt: "PDF, 12 MB", kEn: "File", vEn: "PDF, 12 MB" },
+      { kPt: "Idioma", vPt: "Português", kEn: "Language", vEn: "Portuguese" },
+      { kPt: "Entrega", vPt: "Link imediato", kEn: "Delivery", vEn: "Instant link" }
+    ] }
+];
+
+const ORDERS = [
+  { code: "#MHP-0412", date: "05 set 2026", customer: "Marina Bicalho", status: "Em produção", payment: "Stripe · cartão",
+    contact: [["E-mail", "marina.b@gmail.com"], ["Telefone", "+55 31 98812-4407"], ["CPF", "042.118.***-**"], ["Como me achou", "Twitter"]],
+    address: "Rua Sapucaí, 388, ap. 51 — Floresta, Belo Horizonte / MG, 30150-904, Brasil",
+    shipping: "Correios SEDEX · previsão 12 set",
+    items: [["Carta escrita à mão", 1, 45], ["Marcador bordado", 2, 25]],
+    notes: "A carta é para minha avó, aniversário de 80 anos. Ela gosta de flores e de reclamar do trânsito. Se puder mencionar as duas coisas, ótimo." },
+  { code: "#MHP-0411", date: "03 set 2026", customer: "Rafael Andrade", status: "Aguardando pagamento", payment: "Stripe · boleto",
+    contact: [["E-mail", "rafael@estudioanda.com.br"], ["Telefone", "+55 11 97733-1290"], ["CPF", "318.907.***-**"], ["Como me achou", "Indicação"]],
+    address: "Alameda Santos, 1421, conj. 92 — Cerqueira César, São Paulo / SP, 01419-002, Brasil",
+    shipping: "Correios PAC · previsão 18 set",
+    items: [["Retrato a lápis", 1, 180]],
+    notes: "Foto de referência vai por e-mail. É um presente de casamento, prazo até 20 de setembro." },
+  { code: "#MHP-0410", date: "28 ago 2026", customer: "Júlia Ferreira", status: "Despachado", payment: "Stripe · Pix",
+    contact: [["E-mail", "juliaf.arq@outlook.com"], ["Telefone", "+55 48 99150-3388"], ["CPF", "127.554.***-**"], ["Como me achou", "Instagram"]],
+    address: "Servidão das Palmeiras, 76 — Campeche, Florianópolis / SC, 88063-310, Brasil",
+    shipping: "Correios SEDEX · rastreio BR8841200SC",
+    items: [["Desenho a nanquim", 1, 120], ["Carta escrita à mão", 1, 45]],
+    notes: "Sem pressa. Se der, embala junto — vai para o mesmo endereço." },
+  { code: "#MHP-0409", date: "24 ago 2026", customer: "Bruno Tavares", status: "Despachado", payment: "Stripe · cartão",
+    contact: [["E-mail", "bruno.tavares@hey.com"], ["Telefone", "+55 21 98204-7715"], ["CPF", "550.331.***-**"], ["Como me achou", "Busca no Google"]],
+    address: "Rua Barata Ribeiro, 502, bl. 2 / 1104 — Copacabana, Rio de Janeiro / RJ, 22040-002, Brasil",
+    shipping: "Correios PAC · rastreio BR7719044RJ",
+    items: [["Marcador bordado", 3, 25]],
+    notes: "Três cores diferentes, se possível. Uma delas verde." }
+];
+
+const SHIP = [
+  { id: "pac", name: "Correios PAC", eta: "8 a 12 dias", price: 22 },
+  { id: "sedex", name: "Correios SEDEX", eta: "3 a 5 dias", price: 41 }
+];
+
+const brl = (n) => "R$ " + Number(n).toFixed(2).replace(".", ",");
+const emptyDraft = () => ({
+  id: null, slug: "", active: "sim", type: "fisico", price: 0, stock: 0,
+  pt: { name: "", sub: "", desc: "" }, en: { name: "", sub: "", desc: "" },
+  specs: [{ kPt: "", vPt: "", kEn: "", vEn: "" }],
+  photos: [{ altPt: "", altEn: "" }]
+});
+
+class Component extends DCLogic {
+  state = {
+    mode: "shop", view: "home", pid: null, drawer: false, cart: [],
+    items: SEED, adminView: "products", draft: null, ship: "pac", order: 0
+  };
+
+  add(id) {
+    this.setState((s) => {
+      const cart = s.cart.map((l) => ({ ...l }));
+      const hit = cart.find((l) => l.id === id);
+      if (hit) hit.qty += 1; else cart.push({ id, qty: 1 });
+      return { cart, drawer: true };
+    });
+  }
+
+  setQty(id, d) {
+    this.setState((s) => ({
+      cart: s.cart.map((l) => (l.id === id ? { ...l, qty: l.qty + d } : l)).filter((l) => l.qty > 0)
+    }));
+  }
+
+  patch(path, value) {
+    this.setState((s) => {
+      const d = { ...s.draft, pt: { ...s.draft.pt }, en: { ...s.draft.en } };
+      if (path.length === 1) d[path[0]] = value; else d[path[0]][path[1]] = value;
+      return { draft: d };
+    });
+  }
+
+  patchSpec(i, key, value) {
+    this.setState((s) => {
+      const specs = s.draft.specs.map((r, n) => (n === i ? { ...r, [key]: value } : r));
+      return { draft: { ...s.draft, specs } };
+    });
+  }
+
+  field(path) {
+    const d = this.state.draft || emptyDraft();
+    const v = path.length === 1 ? d[path[0]] : d[path[0]][path[1]];
+    return { value: v, onChange: (e) => this.patch(path, e.target.value) };
+  }
+
+  specField(i, key) {
+    return {
+      value: this.state.draft.specs[i][key],
+      onChange: (e) => this.patchSpec(i, key, e.target.value)
+    };
+  }
+
+  photoField(i, key) {
+    return {
+      value: this.state.draft.photos[i][key],
+      onChange: (e) => this.setState((st) => ({
+        draft: {
+          ...st.draft,
+          photos: st.draft.photos.map((p, n) => (n === i ? { ...p, [key]: e.target.value } : p))
+        }
+      }))
+    };
+  }
+
+  save() {
+    this.setState((s) => {
+      const d = s.draft;
+      const rec = {
+        id: d.id || d.slug || "item-" + Date.now(),
+        slug: d.slug || "sem-identificador",
+        active: d.active === "sim", type: d.type,
+        price: Number(d.price) || 0, stock: Number(d.stock) || 0,
+        pt: d.pt, en: d.en, specs: d.specs, photos: d.photos
+      };
+      const items = d.id ? s.items.map((i) => (i.id === d.id ? rec : i)) : s.items.concat([rec]);
+      return { items, draft: null, adminView: "products" };
+    });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const featuredId = this.props.featured ?? "carta";
+    const live = s.items.filter((i) => i.active);
+    const featured = live.find((p) => p.id === featuredId) || live[0] || s.items[0];
+    const prod = s.items.find((p) => p.id === s.pid) || featured;
+    const ship = SHIP.find((o) => o.id === s.ship) || SHIP[0];
+
+    const lines = s.cart.map((l) => {
+      const p = s.items.find((x) => x.id === l.id);
+      return {
+        name: p.pt.name, meta: p.pt.sub, qty: l.qty, initial: p.pt.name.charAt(0),
+        unitLabel: brl(p.price), typeLabel: p.type === "digital" ? "digital" : "físico",
+        lineLabel: brl(p.price * l.qty),
+        inc: () => this.setQty(l.id, 1), dec: () => this.setQty(l.id, -1)
+      };
+    });
+    const subtotal = s.cart.reduce((t, l) => t + s.items.find((x) => x.id === l.id).price * l.qty, 0);
+    const physical = s.cart.some((l) => s.items.find((x) => x.id === l.id).type !== "digital");
+    const shipping = s.cart.length && physical ? ship.price : 0;
+
+    const draft = s.draft;
+    const f = draft ? {
+      slug: this.field(["slug"]), price: this.field(["price"]), stock: this.field(["stock"]),
+      type: this.field(["type"]), active: this.field(["active"]),
+      namePt: this.field(["pt", "name"]), subPt: this.field(["pt", "sub"]), descPt: this.field(["pt", "desc"]),
+      nameEn: this.field(["en", "name"]), subEn: this.field(["en", "sub"]), descEn: this.field(["en", "desc"])
+    } : {};
+
+    const ord = ORDERS[s.order] || ORDERS[0];
+
+    return {
+      shopName: this.props.shopName ?? "My Handmade Portfolio",
+      isShop: s.mode === "shop",
+      isAdmin: s.mode === "admin",
+      isHome: s.mode === "shop" && s.view === "home",
+      isProduct: s.mode === "shop" && s.view === "product",
+      isAbout: s.mode === "shop" && s.view === "about",
+      isCheckout: s.mode === "shop" && s.view === "checkout",
+      isDone: s.mode === "shop" && s.view === "done",
+
+      products: live.map((p) => ({
+        name: p.pt.name, meta: p.pt.sub, priceLabel: brl(p.price), slot: "p-" + p.id,
+        open: () => this.setState({ view: "product", pid: p.id })
+      })),
+      catalogCount: live.length + " peças",
+      featuredName: featured.pt.name,
+      featuredNote: brl(featured.price) + " · " + featured.pt.sub,
+      openFeatured: () => this.setState({ view: "product", pid: featured.id }),
+      prod: {
+        name: prod.pt.name, meta: prod.pt.sub, desc: prod.pt.desc, priceLabel: brl(prod.price),
+        slot: "p-" + prod.id, slotB: "d-" + prod.id, slotC: "e-" + prod.id,
+        stockLabel: prod.type === "digital" ? "download imediato" : prod.stock + " em estoque",
+        specs: prod.specs.map((r) => ({ k: r.kPt, v: r.vPt }))
+      },
+      addProd: () => this.add(prod.id),
+
+      goHome: () => this.setState({ mode: "shop", view: "home" }),
+      goAbout: () => this.setState({ mode: "shop", view: "about" }),
+      goCheckout: () => this.setState({ drawer: false, view: "checkout" }),
+      toDone: () => { if (s.cart.length) this.setState({ view: "done" }); },
+      openCart: () => this.setState({ mode: "shop", drawer: true }),
+      closeDrawer: () => this.setState({ drawer: false }),
+      drawerOpen: s.drawer,
+
+      cartLines: lines,
+      cartEmpty: lines.length === 0,
+      cartCount: s.cart.reduce((t, l) => t + l.qty, 0),
+      subtotalLabel: brl(subtotal),
+      shippingLabel: shipping ? brl(shipping) : "—",
+      totalLabel: brl(subtotal + shipping),
+      shipName: ship.name,
+      shipEta: ship.eta,
+      shipOptions: SHIP.map((o) => ({
+        name: o.name, eta: o.eta, priceLabel: brl(o.price),
+        on: o.id === s.ship, off: o.id !== s.ship,
+        pick: () => this.setState({ ship: o.id })
+      })),
+      orderNo: "0" + (413 + s.cart.length),
+
+      goAdmin: () => this.setState({ mode: "admin", adminView: "products", draft: null }),
+      goAdminProducts: () => this.setState({ adminView: "products", draft: null }),
+      goAdminOrders: () => this.setState({ adminView: "orders", draft: null }),
+      adminList: s.adminView === "products" && !s.draft,
+      adminForm: !!s.draft,
+      adminOrders: s.adminView === "orders" && !s.draft,
+      adminSummary: s.items.length + " cadastrados · " + live.length + " ativos · " +
+        s.items.filter((i) => i.type === "digital").length + " digitais",
+      adminItems: s.items.map((it) => {
+        const ok = !!(it.pt.name && it.pt.desc && it.en.name && it.en.desc);
+        return {
+          namePt: it.pt.name, nameEn: it.en.name || "— sem versão EN —", slug: it.slug,
+          priceLabel: brl(it.price), stock: it.type === "digital" ? "∞" : it.stock,
+          typeLabel: it.type === "digital" ? "Digital" : "Físico",
+          active: it.active, inactive: !it.active,
+          i18nOk: ok, i18nMissing: !ok, i18nLabel: it.en.name ? "EN incompleto" : "EN faltando",
+          edit: () => this.setState({
+            draft: {
+              id: it.id, slug: it.slug, active: it.active ? "sim" : "nao", type: it.type,
+              price: it.price, stock: it.stock,
+              pt: { ...it.pt }, en: { ...it.en }, specs: it.specs.map((r) => ({ ...r })),
+              photos: (it.photos || [{ altPt: "", altEn: "" }]).map((p) => ({ ...p }))
+            }
+          }),
+          toggle: () => this.setState((st) => ({
+            items: st.items.map((x) => (x.id === it.id ? { ...x, active: !x.active } : x))
+          })),
+          remove: () => this.setState((st) => ({ items: st.items.filter((x) => x.id !== it.id) }))
+        };
+      }),
+      newItem: () => this.setState({ draft: emptyDraft() }),
+      formEditing: !!(draft && draft.id),
+      formTag: draft && draft.id ? "Editando · " + draft.slug : "Novo cadastro",
+      formTitle: draft && draft.id ? draft.pt.name || "Sem nome" : "Cadastrar produto",
+      f,
+      specRows: draft ? draft.specs.map((r, i) => ({
+        kPt: this.specField(i, "kPt"), vPt: this.specField(i, "vPt"),
+        kEn: this.specField(i, "kEn"), vEn: this.specField(i, "vEn"),
+        remove: () => this.setState((st) => ({
+          draft: { ...st.draft, specs: st.draft.specs.filter((_, n) => n !== i) }
+        }))
+      })) : [],
+      photoRows: draft ? draft.photos.map((p, i) => ({
+        label: i === 0 ? "Foto principal" : "Foto " + (i + 1),
+        slotId: "adm-" + (draft.id || "novo") + "-" + i,
+        altPt: this.photoField(i, "altPt"), altEn: this.photoField(i, "altEn"),
+        remove: () => this.setState((st) => ({
+          draft: { ...st.draft, photos: st.draft.photos.filter((_, n) => n !== i) }
+        }))
+      })) : [],
+      addPhoto: () => this.setState((st) => ({
+        draft: { ...st.draft, photos: st.draft.photos.concat([{ altPt: "", altEn: "" }]) }
+      })),
+      addSpec: () => this.setState((st) => ({
+        draft: { ...st.draft, specs: st.draft.specs.concat([{ kPt: "", vPt: "", kEn: "", vEn: "" }]) }
+      })),
+      saveDraft: () => this.save(),
+      cancelDraft: () => this.setState({ draft: null }),
+      removeDraft: () => this.setState((st) => ({
+        items: st.items.filter((x) => x.id !== st.draft.id), draft: null
+      })),
+
+      ordersSummary: ORDERS.length + " pedidos · " +
+        ORDERS.filter((o) => o.status !== "Despachado").length + " em aberto",
+      orders: ORDERS.map((o, i) => ({
+        code: o.code, date: o.date, customer: o.customer, status: o.status,
+        itemsLabel: o.items.reduce((t, [, q]) => t + q, 0) + " itens",
+        totalLabel: brl(o.items.reduce((t, [, q, p]) => t + q * p, 0)),
+        select: () => this.setState({ order: i })
+      })),
+      order: {
+        code: ord.code, date: ord.date, customer: ord.customer, status: ord.status,
+        payment: ord.payment, address: ord.address, shipping: ord.shipping, notes: ord.notes,
+        contact: ord.contact.map(([k, v]) => ({ k, v })),
+        items: ord.items.map(([name, qty, price]) => ({ name, qty, unitLabel: brl(price) })),
+        totalLabel: brl(ord.items.reduce((t, [, q, p]) => t + q * p, 0))
+      },
+
+      aboutBlocks: [
+        { tag: "01 · Como funciona", title: "Você pede, eu faço, o correio entrega.", body: "Nada aqui é produzido em lote. Depois do pagamento eu começo a peça, e mando o código de rastreio por e-mail quando despacho. O prazo de cada item está na página dele." },
+        { tag: "02 · Materiais", title: "Papel de algodão, nanquim, grafite e linha.", body: "Uso papel algodão 180g, tinta nanquim preta, lápis grafite 2H a 6B e linha de algodão. É a lista inteira. Quando entrar cerâmica no catálogo, esta lista muda." },
+        { tag: "03 · Trocas", title: "Se chegar torto, eu faço de novo.", body: "Peça danificada no transporte ou fora do que combinamos: me escreve em até sete dias e eu refaço ou devolvo o valor. Encomendas personalizadas passam por uma prévia antes de finalizar." }
+      ],
+      aboutFacts: [
+        { v: "4", k: "peças no catálogo" },
+        { v: "2026", k: "primeira carta enviada" },
+        { v: "5 dias", k: "prazo médio de produção" },
+        { v: "1", k: "pessoa fazendo tudo" }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>
