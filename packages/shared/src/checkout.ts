@@ -40,7 +40,7 @@ export const checkoutRequestSchema = z.object({
     .min(1)
     .max(CART_MAX_DISTINCT)
     .refine((items) => new Set(items.map((i) => i.slug)).size === items.length, {
-      message: 'Duplicate items in cart',
+      message: 'duplicate_items',
     }),
   locale: z.enum(['pt', 'en']),
   buyer: buyerSchema,
