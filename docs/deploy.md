@@ -11,8 +11,6 @@ Manual checklist for standing up production. These are dashboard steps across fi
 
 ## 2. Stripe (test mode first)
 
-Test mode is optional: the first deploy (2026-09-07) went straight to live keys. If you do that, skip step 8 — the `4242` card is rejected in live mode — and read step 9.
-
 1. In the Stripe dashboard (test mode), copy the secret key (`sk_test_...`).
 2. Create a webhook endpoint pointing at `https://api.shop.augustoamaral.com/api/stripe/webhook`, subscribed to the `checkout.session.completed` event.
 3. Copy the webhook's signing secret (`whsec_...`) — both values go into Render (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`).
