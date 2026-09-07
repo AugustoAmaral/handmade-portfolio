@@ -19,7 +19,7 @@ export interface SessionInput {
 
 const SHIPPING_LABEL = { pt: 'Frete', en: 'Shipping' } as const
 
-export function toStripeAddress(a: ShippingAddress) {
+export function toStripeAddress(a: ShippingAddress): Stripe.ShippingAddressParam {
   const line2 = [a.complement, a.district].filter(Boolean).join(' - ')
   return {
     country: a.country,
@@ -28,7 +28,7 @@ export function toStripeAddress(a: ShippingAddress) {
     line2: line2 || undefined,
     city: a.city,
     state: a.state,
-  } as Stripe.Checkout.SessionCreateParams.PaymentIntentData.Shipping['address']
+  }
 }
 
 // Pure: everything Stripe needs, nothing read from the outside. Prices arrive already looked up
