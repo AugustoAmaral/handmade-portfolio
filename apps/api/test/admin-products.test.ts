@@ -114,4 +114,80 @@ describe('admin products', () => {
     expect(deleteObject).toHaveBeenCalledWith(`products/${id}/a.webp`)
     expect(await Product.countDocuments()).toBe(0)
   })
+
+  it('creates a product with subtitle, specs and featured, and lists them back', async () => {
+    const app = createApp()
+    const res = await auth(request(app).post('/api/admin/products').send({
+      ...input,
+      subtitle: { pt: 'Papel algodão', en: 'Cotton paper' },
+      specs: [{ key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A5', en: 'A5' } }],
+      featured: true,
+    }))
+    expect(res.status).toBe(201)
+    expect(res.body.product.subtitle).toEqual({ pt: 'Papel algodão', en: 'Cotton paper' })
+    expect(res.body.product.specs).toHaveLength(1)
+    expect(res.body.product.featured).toBe(true)
+  })
+
+  it('stores alt text sent with a photo upload', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    const png = await sharp({ create: { width: 10, height: 10, channels: 3, background: 'red' } }).png().toBuffer()
+    const res = await auth(
+      request(app).post(`/api/admin/products/${id}/photos`)
+        .field('altPt', 'Carta na mesa').field('altEn', 'Letter on a table')
+        .attach('photo', png, 'photo.png'),
+    )
+    expect(res.status).toBe(201)
+    expect(res.body.product.photos[0].alt).toEqual({ pt: 'Carta na mesa', en: 'Letter on a table' })
+    expect(res.body.product.photos[0].key).toMatch(new RegExp(`^products/${id}/`))
+  })
+
+  it('reorders photos and edits alt text through PUT, keeping alt for entries without one', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    await Product.updateOne({ _id: id }, {
+      $push: { photos: { $each: [
+        { r2Key: `products/${id}/a.webp`, alt: { pt: 'A pt', en: 'A en' } },
+        { r2Key: `products/${id}/b.webp`, alt: { pt: 'B pt', en: 'B en' } },
+      ] } },
+    })
+    const res = await auth(request(app).put(`/api/admin/products/${id}`).send({
+      ...input,
+      photos: [{ key: `products/${id}/b.webp`, alt: { pt: 'B novo', en: 'B new' } }, { key: `products/${id}/a.webp` }],
+    }))
+    expect(res.status).toBe(200)
+    expect(res.body.product.photos.map((p: { key: string }) => p.key)).toEqual([`products/${id}/b.webp`, `products/${id}/a.webp`])
+    expect(res.body.product.photos[0].alt).toEqual({ pt: 'B novo', en: 'B new' })
+    expect(res.body.product.photos[1].alt).toEqual({ pt: 'A pt', en: 'A en' })
+  })
+
+  it('400s when the PUT photos list does not match the existing keys exactly', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    await Product.updateOne({ _id: id }, { $push: { photos: { r2Key: `products/${id}/a.webp` } } })
+    for (const photos of [
+      [],                                                                            // drops a photo
+      [{ key: `products/${id}/zzz.webp` }],                                          // unknown key
+      [{ key: `products/${id}/a.webp` }, { key: `products/${id}/a.webp` }],          // duplicate
+    ]) {
+      const res = await auth(request(app).put(`/api/admin/products/${id}`).send({ ...input, photos }))
+      expect(res.status).toBe(400)
+      expect(res.body.error.fieldErrors).toEqual({ photos: ['must_match_existing'] })
+    }
+  })
+
+  it('leaves photos untouched when PUT omits the photos field', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    await Product.updateOne({ _id: id }, { $push: { photos: { r2Key: `products/${id}/a.webp` } } })
+    const res = await auth(request(app).put(`/api/admin/products/${id}`).send({ ...input, priceCents: 3500 }))
+    expect(res.status).toBe(200)
+    expect(res.body.product.photos).toHaveLength(1)
+    expect(res.body.product.priceCents).toBe(3500)
+  })
 })

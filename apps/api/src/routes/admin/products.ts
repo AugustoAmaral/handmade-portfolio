@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { productInputSchema } from '@shop/shared'
+import { productInputSchema, productUpdateSchema } from '@shop/shared'
 import { Router } from 'express'
 import multer from 'multer'
 import { AppError } from '../../errors.js'
@@ -36,9 +36,24 @@ adminProductsRouter.post('/api/admin/products', async (req, res) => {
 })
 
 adminProductsRouter.put('/api/admin/products/:id', async (req, res) => {
-  const input = productInputSchema.parse(req.body)
+  const { photos, ...input } = productUpdateSchema.parse(req.body)
   const doc = await findProduct(req.params.id)
   doc.set(input)
+  if (photos) {
+    // Reorder + alt edit only. Adding goes through POST /photos, removing through DELETE /photos,
+    // so the list must be a permutation of what exists — anything else would orphan R2 objects.
+    const existing = new Map(doc.photos.map((p) => [p.r2Key, p]))
+    const keys = photos.map((p) => p.key)
+    const matches = keys.length === existing.size && new Set(keys).size === keys.length && keys.every((k) => existing.has(k))
+    if (!matches) throw new AppError(400, 'VALIDATION', 'photos must list every existing photo exactly once', { photos: ['must_match_existing'] })
+    doc.set(
+      'photos',
+      photos.map((p) => ({
+        r2Key: p.key,
+        alt: p.alt ?? { pt: existing.get(p.key)!.alt?.pt ?? '', en: existing.get(p.key)!.alt?.en ?? '' },
+      })),
+    )
+  }
   try {
     await doc.save()
   } catch (err) {
@@ -64,7 +79,12 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
   const webp = await toWebp(req.file.buffer)
   const key = `products/${doc._id}/${randomUUID()}.webp`
   await putObject(key, webp)
-  doc.photos.push({ r2Key: key })
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const alt = {
+    pt: typeof body.altPt === 'string' ? body.altPt.slice(0, 200) : '',
+    en: typeof body.altEn === 'string' ? body.altEn.slice(0, 200) : '',
+  }
+  doc.photos.push({ r2Key: key, alt })
   await doc.save()
   res.status(201).json({ product: toPublicProduct(doc) })
 })
