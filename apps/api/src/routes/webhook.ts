@@ -67,7 +67,9 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         { $inc: { stock: -item.qty } },
       )
       if (!decremented) {
-        await Order.updateOne({ _id: before._id }, { $set: { status: 'oversold' } })
+        // Guard on status: if the admin already shipped this order in the meantime, don't
+        // clobber that transition back to oversold.
+        await Order.updateOne({ _id: before._id, status: 'paid' }, { $set: { status: 'oversold' } })
       }
     } catch (err) {
       // The order is already paid at this point, so a 500 would only make Stripe retry into

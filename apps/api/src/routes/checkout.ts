@@ -6,6 +6,7 @@ import {
   hasPhysicalItems,
 } from '@shop/shared'
 import { Router } from 'express'
+import type Stripe from 'stripe'
 import { getEnv } from '../env.js'
 import { AppError } from '../errors.js'
 import { buildCheckoutSessionParams } from '../lib/checkout-session.js'
@@ -63,7 +64,7 @@ checkoutRouter.post('/api/checkout', async (req, res) => {
     amounts: { ...totals, currency: 'brl' },
   })
 
-  let session
+  let session: Stripe.Checkout.Session
   try {
     session = await stripe.checkout.sessions.create(
       buildCheckoutSessionParams({
@@ -90,8 +91,7 @@ checkoutRouter.post('/api/checkout', async (req, res) => {
   }
 
   try {
-    order.stripeSessionId = session.id
-    await order.save()
+    await Order.updateOne({ _id: order._id }, { $set: { stripeSessionId: session.id } })
   } catch (err) {
     // A live Stripe session with nothing to reconcile it to is worse than an expired one:
     // expire the session and drop the order rather than leave an unpayable ghost order behind.
