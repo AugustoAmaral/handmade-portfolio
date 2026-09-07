@@ -100,7 +100,7 @@ export function toPublicOrder(doc: OrderDoc): PublicOrder {
     totalCents: doc.amounts!.totalCents,
     currency: doc.amounts!.currency,
     shippingMethod: method,
-    eta: method ? SHIPPING_METHODS[method].eta : null,
+    eta: method ? (SHIPPING_METHODS[method]?.eta ?? null) : null,
   }
 }
 

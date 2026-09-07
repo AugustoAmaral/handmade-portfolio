@@ -61,6 +61,13 @@ describe('models', () => {
     expect(JSON.stringify(pub)).not.toContain('marina@example.com')
   })
 
+  it('degrades to a null ETA for a stored shipping method outside the known set', async () => {
+    await Order.collection.insertOne({ ...pendingOrder(12), shippingMethod: 'drone' })
+    const doc = (await Order.findOne({ orderNumber: 12 }))!
+    expect(() => toPublicOrder(doc)).not.toThrow()
+    expect(toPublicOrder(doc).eta).toBeNull()
+  })
+
   it('serializes an admin order with everything', async () => {
     const doc = await Order.create({ ...pendingOrder(11), stripeSessionId: 'cs_adm', trackingCode: 'BR123' })
     const adm = toAdminOrder(doc)
