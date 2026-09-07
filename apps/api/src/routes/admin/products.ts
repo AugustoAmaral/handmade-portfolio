@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { productInputSchema, productUpdateSchema } from '@shop/shared'
 import { Router } from 'express'
 import multer from 'multer'
+import { z } from 'zod'
 import { AppError } from '../../errors.js'
 import { toWebp } from '../../lib/images.js'
 import { deleteObject, putObject } from '../../lib/r2.js'
@@ -9,6 +10,8 @@ import { Product, toPublicProduct } from '../../models/product.js'
 import { adminGuard } from '../../middleware/auth.js'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } })
+
+const altSchema = z.object({ altPt: z.string().max(200).optional(), altEn: z.string().max(200).optional() })
 
 export const adminProductsRouter = Router()
 adminProductsRouter.use('/api/admin/products', adminGuard)
@@ -76,14 +79,11 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
   // generic ParamsDictionary overload (id: string | string[]) instead of inferring the
   // precise route param type from the literal path.
   const doc = await findProduct(req.params.id as string)
+  const { altPt, altEn } = altSchema.parse(req.body ?? {})
   const webp = await toWebp(req.file.buffer)
   const key = `products/${doc._id}/${randomUUID()}.webp`
   await putObject(key, webp)
-  const body = (req.body ?? {}) as Record<string, unknown>
-  const alt = {
-    pt: typeof body.altPt === 'string' ? body.altPt.slice(0, 200) : '',
-    en: typeof body.altEn === 'string' ? body.altEn.slice(0, 200) : '',
-  }
+  const alt = { pt: altPt ?? '', en: altEn ?? '' }
   doc.photos.push({ r2Key: key, alt })
   await doc.save()
   res.status(201).json({ product: toPublicProduct(doc) })
@@ -92,6 +92,7 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
 adminProductsRouter.delete('/api/admin/products/:id/photos', async (req, res) => {
   const key = String(req.query.key ?? '')
   const doc = await findProduct(req.params.id)
+  if (!doc.photos.some((p) => p.r2Key === key)) throw new AppError(404, 'PHOTO_NOT_FOUND', 'Photo not found on this product')
   await deleteObject(key)
   doc.photos = doc.photos.filter((p) => p.r2Key !== key) as typeof doc.photos
   await doc.save()

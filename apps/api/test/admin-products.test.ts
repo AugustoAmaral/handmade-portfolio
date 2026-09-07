@@ -144,6 +144,36 @@ describe('admin products', () => {
     expect(res.body.product.photos[0].key).toMatch(new RegExp(`^products/${id}/`))
   })
 
+  it('400s on photo upload when altPt is over 200 chars', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    const png = await sharp({ create: { width: 10, height: 10, channels: 3, background: 'red' } }).png().toBuffer()
+    const res = await auth(
+      request(app).post(`/api/admin/products/${id}/photos`)
+        .field('altPt', 'x'.repeat(201))
+        .attach('photo', png, 'photo.png'),
+    )
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('VALIDATION')
+    expect(res.body.error.fieldErrors.altPt).toBeTruthy()
+    expect(putObject).not.toHaveBeenCalled()
+  })
+
+  it('404s deleting a photo key the product does not own', async () => {
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+    await Product.updateOne({ _id: id }, { $push: { photos: { r2Key: `products/${id}/a.webp` } } })
+
+    const res = await auth(
+      request(app).delete(`/api/admin/products/${id}/photos`).query({ key: `products/${id}/not-owned.webp` }),
+    )
+    expect(res.status).toBe(404)
+    expect(res.body.error.code).toBe('PHOTO_NOT_FOUND')
+    expect(deleteObject).not.toHaveBeenCalled()
+  })
+
   it('reorders photos and edits alt text through PUT, keeping alt for entries without one', async () => {
     const app = createApp()
     const created = await auth(request(app).post('/api/admin/products').send(input))
