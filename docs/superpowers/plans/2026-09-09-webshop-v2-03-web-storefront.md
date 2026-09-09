@@ -1338,11 +1338,17 @@ git commit -m "feat(web): add the product gallery and specs table"
 **Interfaces — produced:**
 
 ```ts
-interface AboutBlock { tag: string; title: string; body: string }
-interface AboutBlocksProps { blocks: readonly AboutBlock[] }
-interface AboutFact { value: string; label: string }
-interface AboutFactsProps { facts: readonly AboutFact[] }
-interface AboutClosingProps { contactEmail: string }
+// ⚠️ AMENDED after Task 8. The drafted `blocks` / `facts` props were not just a style choice —
+// they were RED ON ARRIVAL. `copy.test.ts` scans only `src/ui` for literal `t('…')` call sites and
+// fails on any pt.json key no call site accounts for. Copy "resolved by the container" is resolved
+// in `src/app/routes/AboutRoute.tsx`, which the scanner never walks, so all 19 keys would have been
+// unaccounted for. The same test pins the number of DYNAMIC `t()` sites at exactly one
+// (`StatusPill`), so a `BLOCKS.map(t)` table is unavailable too. Wherever this copy lives it must
+// be spelled-out literals inside `src/ui`. The draft asked for `t()` calls AND container-resolved
+// props; those two halves cannot both hold.
+interface AboutBlocksProps { /* none — the component owns its copy, like the other 13 shop components */ }
+interface AboutFactsProps { /* none — same */ }
+interface AboutClosingProps { contactEmail: string }   // configuration, not copy; same prop ClosingBlock takes
 ```
 
 - [ ] **Step 1: Decide where the About content lives**
@@ -1356,6 +1362,8 @@ The three blocks and four facts are hardcoded in the prototype. They are copy, s
 The page has one `<h1>` (the About hero) and the three blocks are `<h2>`. The prototype's closing heading is a `<div>`; make it an `<h2>` too. `heading-order` will fail on any skip, and this is the first page on the branch with enough headings for it to fire.
 
 `AboutFacts` is `<dl>` again: the value is the `<dd>`, the label the `<dt>` — note the visual order is value-then-label, which is the reverse of the DOM order a `<dl>` wants. Use `flex-col-reverse` rather than lying about which is which.
+
+> **Refinement measured in Task 8.** Task 7 found axe silent on an EMPTY `<dl>`; that does not generalise to `<dl>` structure. Nesting `<dt>`/`<dd>` one level deeper trips `definition-list` and `dlitem` loudly. What axe genuinely cannot see is **which `<dd>` belongs to which `<dt>`** — four terms followed by four definitions passes clean with every text assertion still green. That is the case an explicit pairing assertion earns its keep on.
 
 - [ ] **Step 3: Stories, prove, commit**
 
@@ -1464,6 +1472,10 @@ git commit -m "feat(web): add the checkout sections and order summary"
 Pages are pure compositions: they take fully-resolved props and render components. No data fetching, no state, no routing. This is what makes a full-page Storybook possible without a single mock, which is the thing Augusto asked for.
 
 **Interfaces — produced:** each page takes the union of what its components need, plus `lang`. `ShopShell` takes `header` props, `drawer` props and `children`.
+
+- [ ] **Step 0: Build the two components the file map forgot** (raised by Task 8)
+
+`AboutHero` and the `← Catálogo` back bar have no owner anywhere in this plan. The extract is emphatic that the About hero differs from the Home hero in five measured ways and must not share an implementation, yet the file map gives `Hero` to the home page and nothing to About; and the back bar is byte-identical at the top of both the Product and About pages. Left as drafted they land inline inside pages whose stated job is composition. Build both in `src/ui/shop/` with their own stories, then compose.
 
 - [ ] **Step 1: Build the pages**
 
@@ -1873,7 +1885,8 @@ Check each, and report findings rather than a clean bill of health:
 
 1. **Unfailable assertions.** Every `expect` added on this branch: can you name the mutation that reddens it? For any you cannot, mutate and find out. Delete the ones that survive everything.
 2. **Assertions that pass for the wrong reason.** Chiefly: a story asserting on text that the component renders unconditionally, and a contrast assertion comparing two file-local constants rather than a measured value.
-3. **`t()` calls with no `pt.json` entry**, and `pt.json` entries nothing calls. The copy test catches the first; the second needs `grep`. Report unused keys — some are legitimately planted for PR 4, and those should be named as such rather than silently kept.
+3. **`Stat` has zero consumers and this branch is why.** PR 2 shipped it for the About facts band — its own story's args are literally `value: '4', label: 'peças no catálogo'` — but it renders two `<div>`s in flow order and the band needs a `<dt>`/`<dd>` pair in reverse order. Task 8 re-implemented the cell locally rather than give a primitive an emit-a-`<dd>` mode valid only inside a `<dl>` that flips its own DOM order. Either give `Stat` the `<dl>` semantics and have `AboutFacts` consume it, or delete it. Do not leave a primitive on the branch that nothing renders.
+4. **`t()` calls with no `pt.json` entry**, and `pt.json` entries nothing calls. The copy test catches the first; the second needs `grep`. Report unused keys — some are legitimately planted for PR 4, and those should be named as such rather than silently kept.
 4. **Components that took local state** to make a story work. The purity test catches hooks by name; it does not catch a component that asks its parent for state it should not need.
 5. **Story coverage against spec:231** — Home (full catalog, empty), Product (gallery, no photos, sold out, digital), Checkout (empty, BR filled, international filled, validation errors, submitting, out-of-stock error), Done (pending, paid). Name any listed state with no story.
 
