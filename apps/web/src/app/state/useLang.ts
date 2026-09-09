@@ -30,7 +30,6 @@ export function useLang(): { lang: Lang; toggle(): void } {
   const [lang, setLang] = useState<Lang>(initialLang)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, lang)
     // `language`, not `resolvedLanguage`: only pt has a resource bundle (English keys render
     // themselves), and i18next only resolves to a language that HAS translations, so
     // `resolvedLanguage` is undefined while the app is in English. Guarding on it would compare
@@ -38,7 +37,16 @@ export function useLang(): { lang: Lang; toggle(): void } {
     if (i18n.language !== lang) void i18n.changeLanguage(lang)
   }, [lang, i18n])
 
-  const toggle = useCallback(() => setLang((prev) => (prev === 'pt' ? 'en' : 'pt')), [])
+  // Persisting belongs here and not in the effect: `shop_lang` records a CHOICE. Written on mount
+  // it would record a sniff instead, freezing the first visit's browser setting forever — a
+  // visitor who later switched their browser to Portuguese would keep getting English. Reading
+  // `lang` rather than the functional update is what makes the next value available to write, and
+  // is why this closes over `[lang]`; it is a prop two components deep and changes once per switch.
+  const toggle = useCallback(() => {
+    const next: Lang = lang === 'pt' ? 'en' : 'pt'
+    localStorage.setItem(STORAGE_KEY, next)
+    setLang(next)
+  }, [lang])
 
   return { lang, toggle }
 }

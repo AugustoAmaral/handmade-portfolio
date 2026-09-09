@@ -56,6 +56,15 @@ describe('useLang', () => {
     expect(result.current.lang).toBe('en')
   })
 
+  it('writes nothing on mount, so a visitor who never chooses keeps following the browser', () => {
+    // The stored value means "the user chose this", never "the browser said this once". Writing a
+    // sniffed language on mount would freeze the first visit's browser setting forever, and a
+    // visitor who later switches their browser to Portuguese would keep getting English.
+    browserLanguage('en-GB')
+    renderHook(() => useLang(), { wrapper })
+    expect(localStorage.getItem('shop_lang')).toBeNull()
+  })
+
   it('toggles, persists, and actually changes the i18n instance', async () => {
     browserLanguage('pt-BR')
     const { result } = renderHook(() => useLang(), { wrapper })
