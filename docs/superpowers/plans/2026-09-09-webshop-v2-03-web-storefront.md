@@ -25,8 +25,16 @@ One finding from the extraction reshapes those tasks: **the prototype contains z
 - **Navigation is `<a href>` built from `ui/routes.ts`.** No UI component imports the router. `LinkInterceptor` at the app root upgrades same-origin clicks. Callbacks only where something happens before or instead of navigating (`onAddToCart`, `onInc`, `onSubmit`).
 - **Prices are integer BRL cents** and always formatted through `formatPrice(cents, lang)`. Client-side totals are display-only; the API re-prices from Mongo.
 - Design tokens (already in `index.css`, do not redefine): `--color-paper #f4f0e6`, `--color-paper-2 #efe9db`, `--color-paper-3 #e6dfcd`, `--color-ink #1a1713`, `--color-accent #a63d20`; `--font-display 'Instrument Serif'`, `--font-body Newsreader`, `--font-mono 'IBM Plex Mono'`.
-- **Accessibility is a gate, not a review comment.** `.storybook/preview.tsx` sets `a11y: { test: 'error' }`, so every new story must pass axe. Page-scale rules that never fired on isolated primitives WILL fire now: `region` (all content in landmarks), `heading-order`, `landmark-unique`, `page-has-heading-one`. Fix the component; never disable the rule.
+- **Accessibility is a gate, not a review comment.** `.storybook/preview.tsx` sets `a11y: { test: 'error' }`, so every new story must pass axe. Fix the component; never disable a rule.
+- **Which axe rules can actually fire here — corrected in Task 5, measured against the addon's source, because the original list was wrong:**
+  - `region` **NEVER fires.** `@storybook/addon-a11y` ships `DISABLED_RULES = ["region"]` with the comment *"In component testing, landmarks are not always present and the rule check can cause false positives"*. Do not design markup to satisfy it.
+  - `page-has-heading-one`, `landmark-one-main` and `bypass` **never fire either**: their selector is `html:not(html *)` and the addon runs against `document.body`.
+  - `heading-order` cannot fire on a story with a single heading — axe returns true at index 0. It needs three headings to trigger.
+  - What DOES fire and has already caught real defects: `color-contrast`, `button-name`, `aria-dialog-name`, `listitem`, and `landmark-unique` (only once a second unnamed landmark of the same type exists).
+  - **Known blind spot:** `color-contrast` SKIPS single-character text, treating it as a suspected icon ligature. A one-glyph element passes at any contrast. Task 5 probed this across opacity, font size and `aria-hidden`. Judge such elements on the merits; the gate is not watching.
 - **Contrast floors, measured not eyeballed:** 4.5:1 for normal text, 3:1 for text ≥24px and for focus indicators (WCAG 2.2 SC 2.4.11). PR 2 had to raise three opacities and rewrite the focus ring for exactly this. Muted text below `opacity-65` on paper does not clear AA.
+- **`test/ui-boundaries.test.ts` scans RAW SOURCE, comments included.** A doc comment that merely mentions `useState`, `useEffect`, `useRef`, `window.` or `localStorage` fails the purity test, even when the code does nothing of the kind. Task 5 hit this writing a comment explaining WHY the drawer has no focus trap. (`copy.test.ts` strips comments; this one does not.) Phrase such comments around the constraint rather than the API name.
+- **A non-story export in a `.stories.tsx` is indexed as a story** and rendered with no args. Helpers must go in `excludeStories` or live in another file.
 - **Two assertion traps measured on this branch, both of which produced green tests that meant nothing:**
   1. **`toHaveTextContent` matches by SUBSTRING.** `toHaveTextContent('/')` is satisfied by `'/about'`. Task 4 found nine guard mutations passing green behind one of these. Use `expect(el.textContent).toBe(...)` when you mean equality.
   2. **A throw inside a React event handler does not fail a test.** React re-publishes it as an unhandled window error: the test stays green and only the process exit code goes non-zero. So a guard whose absence causes a null-deref is caught by `vitest run` as a whole, but by no assertion — do not count it as proved.
@@ -1112,12 +1120,14 @@ interface CartLineData {
 
 interface CartLineProps {
   line: CartLineData
+  lang: 'pt' | 'en'      // ⚠️ was missing in the draft — see the note under this task
   onInc(slug: string): void
   onDec(slug: string): void
 }
 
 interface CartDrawerProps {
   open: boolean
+  lang: 'pt' | 'en'      // ⚠️ was missing in the draft — see the note under this task
   lines: CartLineData[]
   itemsCents: number
   shippingCents: number | null   // null renders the em dash
@@ -1178,7 +1188,9 @@ export const IncrementsAndDecrementsBySlug: Story = {
   args: { open: true, lines: [/* two fixture lines */], onInc: fn(), onDec: fn(), onClose: fn(), /* totals */ },
   play: async ({ args, canvas, userEvent }) => {
     const second = canvas.getAllByRole('group', { name: /quantidade/i })[1]!
-    await userEvent.click(within(second).getByRole('button', { name: '+' }))
+    // The Stepper primitive labels its buttons `Aumentar`/`Diminuir quantidade` — a query for
+    // the '+' glyph finds nothing.
+    await userEvent.click(within(second).getByRole('button', { name: /aumentar/i }))
     // The slug, not just "it fired": a drawer that reports the wrong line is worse than one
     // that reports nothing, and a bare toHaveBeenCalled() passes for both.
     await expect(args.onInc).toHaveBeenCalledWith(args.lines[1]!.slug)
@@ -1191,7 +1203,9 @@ export const ShippingUnknownShowsAnEmDash: Story = { /* shippingCents: null */ }
 
 - [ ] **Step 6: Prove, verify, commit**
 
-Mutations to run: swap `onInc`/`onDec` (the by-slug test must redden); make the empty drawer render an enabled CTA (the empty test must redden); render the em dash unconditionally (that story must redden).
+Mutations to run: swap `onInc`/`onDec` (the by-slug test must redden); make the empty drawer render an enabled CTA (the empty test must redden).
+
+⚠️ **Do not use the draft's third mutation as written.** "Render the em dash unconditionally" does NOT redden `ShippingUnknownShowsAnEmDash` — an unconditional em dash still satisfies it. It reddens the *other* story. A guard with two directions needs a story for each, and a mutation that reddens the opposite story to the one you predicted is telling you the assertion is anchored to the wrong side.
 
 ```bash
 git add apps/web/src/ui/shop apps/web/src/copy/pt.json apps/web/src/index.css
