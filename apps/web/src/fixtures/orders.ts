@@ -31,6 +31,13 @@ export const pendingOrder: AdminOrder = deepFreeze({
   locale: 'pt',
   items: [items[0]!],
   amounts: { itemsCents: 4500, shippingCents: 2200, totalCents: 6700, currency: 'brl' },
+  // Every order that reached Stripe carries a session id, pending and expired included:
+  // `apps/api/src/routes/checkout.ts:94` writes it immediately after creating the session, and
+  // `models/order.ts:46` indexes it unique + sparse. The field is nonetheless optional in the
+  // type because of the crash window between those two writes — an order created but killed
+  // before the id is persisted. `lib/orphans.ts` sweeps those to `expired` at boot after an hour.
+  // So PR 4's admin UI must still handle its absence; add a fixture for it there if the UI needs one.
+  stripeSessionId: 'cs_test_410',
 })
 
 export const paidOrder: AdminOrder = deepFreeze({
@@ -79,6 +86,7 @@ export const expiredOrder: AdminOrder = deepFreeze({
   createdAt: '2026-09-02T09:10:00.000Z',
   buyer: { name: 'Helena Prado', email: 'helena@example.com' },
   notes: undefined,
+  stripeSessionId: 'cs_test_409',
 })
 
 // All five lifecycle states — the admin table renders this list, so a missing state

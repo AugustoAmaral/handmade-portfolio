@@ -106,9 +106,11 @@ describe('fixtures', () => {
       const stamps = [o.createdAt, o.paidAt, o.shippedAt].filter((s): s is string => s != null)
       expect({ id: o.id, stamps }).toEqual({ id: o.id, stamps: [...stamps].sort() })
     }
-    const sessions = adminOrders.map((o) => o.stripeSessionId).filter((s): s is string => s != null)
-    expect(sessions.length).toBeGreaterThan(1)
-    expect(new Set(sessions).size).toBe(sessions.length)
+    // Not filtered on presence: every order that reached Stripe has a session id, so an order
+    // missing one must fail here rather than quietly drop out of the uniqueness check.
+    const sessions = adminOrders.map((o) => o.stripeSessionId)
+    expect(sessions.every((s) => typeof s === 'string' && s.length > 0)).toBe(true)
+    expect(new Set(sessions).size).toBe(adminOrders.length)
   })
 
   it('exposes the checkout errors the API can really send', () => {
