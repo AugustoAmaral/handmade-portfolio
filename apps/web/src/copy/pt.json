@@ -120,5 +120,20 @@
   "A shop of four pieces,": "Uma loja de quatro peças,",
   "written by hand": "escrita à mão",
   "in both senses.": "nos dois sentidos.",
-  "I am Augusto. A developer by day, and in my spare time someone who writes letters, draws in India ink and embroiders bookmarks. This shop exists because I wanted to build a shop — and it felt more honest to sell things I actually make.": "Sou Augusto. Desenvolvedor de dia, e nas horas vagas alguém que escreve cartas, desenha a nanquim e borda marcadores de página. Esta loja existe porque eu queria construir uma loja — e achei mais honesto vender coisas que eu realmente faço."
+  "I am Augusto. A developer by day, and in my spare time someone who writes letters, draws in India ink and embroiders bookmarks. This shop exists because I wanted to build a shop — and it felt more honest to sell things I actually make.": "Sou Augusto. Desenvolvedor de dia, e nas horas vagas alguém que escreve cartas, desenha a nanquim e borda marcadores de página. Esta loja existe porque eu queria construir uma loja — e achei mais honesto vender coisas que eu realmente faço.",
+  "Written, packed and posted by me, within 5 business days. Payment processed by Stripe.": "Escrito, embalado e despachado por mim, em até 5 dias úteis. Pagamento processado pelo Stripe.",
+  "Complete your order": "Finalizar pedido",
+  "Where I send it, and to whom.": "Para onde eu mando, e para quem.",
+  "Order {{number}}": "Pedido {{number}}",
+  "Order placed.": "Pedido feito.",
+  "Now it is my turn.": "Agora é minha vez.",
+  "Confirming the payment.": "Confirmando o pagamento.",
+  "Still confirming.": "Ainda confirmando.",
+  "I have sent the confirmation by e-mail, and I will send the tracking code when I post it. If you got here from the technical side of things: this whole flow is the portfolio.": "Mandei a confirmação por e-mail, e mando o código de rastreio quando despachar. Se você chegou aqui pelo lado técnico da coisa: este fluxo inteiro é o portfólio.",
+  "Stripe is telling me about the payment. It takes a few seconds — this page refreshes itself.": "O Stripe está me avisando do pagamento. Isso leva alguns segundos — esta página se atualiza sozinha.",
+  "The payment confirmation has not reached me yet. If Stripe sent you the receipt, everything is fine: I get the confirmation and I write to you by e-mail.": "A confirmação do pagamento ainda não chegou até mim. Se o Stripe te mandou o recibo, está tudo certo: eu recebo a confirmação e te aviso por e-mail.",
+  "Total paid": "Total pago",
+  "Delivery": "Envio",
+  "Estimated time": "Prazo estimado",
+  "Back to the catalogue": "Voltar ao catálogo"
 }

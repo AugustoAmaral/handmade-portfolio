@@ -1,0 +1,6 @@
+export * from './AboutPage'
+export * from './CheckoutPage'
+export * from './DonePage'
+export * from './HomePage'
+export * from './ProductPage'
+export * from './ShopShell'
