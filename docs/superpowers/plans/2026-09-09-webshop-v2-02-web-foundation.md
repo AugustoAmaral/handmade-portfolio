@@ -863,7 +863,15 @@ git commit -m "feat(web): route href builders for the ui layer"
 
 **Interfaces:**
 - Consumes: `PublicProduct`, `AdminOrder`, `PublicOrder`, `CheckoutRequest`, `checkoutRequestSchema`, `checkoutRules`, `computeTotals` from `@shop/shared`.
-- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `adminOrders`, `publicPaidOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `brCheckoutErrors`, `cartLines` from `checkout.ts`.
+- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (all five states), `publicPaidOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, `brCheckoutErrors`, `cartLines` from `checkout.ts`.
+
+Amended 2026-09-09 after the first implementation, on three defects it surfaced in its own report rather than hiding.
+
+`brCheckoutErrors` was hand-written and did not match what the app will actually receive. `apps/api/src/routes/checkout.ts:36-37` feeds `checkoutRules(...)` straight into the 400 response, so that object is exactly the function's output: the fixture's `buyer.name` key can never appear in it (zod rejects the buyer earlier, separately), and `shippingAddress.district` and `shippingAddress.state` — which the rules DO emit for an incomplete BR address — were missing. PR 3 would have built its error UI against a shape the API never sends. It is now derived from the real function, with the input kept beside it.
+
+`productWithoutPhotos` was an alias of `soldOutDrawing` — the same object, also a member of `products`. Two names for one object is a mutation trap for stories, and it welded together two unrelated scenarios. It is now its own product.
+
+`adminOrders` covered four of the five lifecycle states; `expired` had no fixture at all, so a status pill would have gone unrendered by every story.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1001,7 +1009,18 @@ export const inactiveGuide: PublicProduct = {
   active: false,
 }
 
-export const productWithoutPhotos = soldOutDrawing
+// Its own object, deliberately not an alias of `soldOutDrawing`: two named fixtures pointing at
+// one object let a story that mutates one corrupt the other, and it also conflates two separate
+// scenarios — a story about the missing-photo placeholder should not silently also be testing
+// the sold-out state.
+export const productWithoutPhotos: PublicProduct = {
+  ...letter,
+  id: 'p-no-photo',
+  slug: 'caderno-costurado',
+  name: { pt: 'Caderno costurado', en: 'Hand-sewn notebook' },
+  subtitle: { pt: 'A5 · 80 páginas', en: 'A5 · 80 pages' },
+  photos: [],
+}
 export const products: PublicProduct[] = [letter, drawing, soldOutDrawing, digitalLetter]
 ```
 
@@ -1074,7 +1093,25 @@ export const oversoldOrder: AdminOrder = {
   notes: undefined,
 }
 
-export const adminOrders: AdminOrder[] = [oversoldOrder, shippedOrder, paidOrder, pendingOrder]
+export const expiredOrder: AdminOrder = {
+  ...pendingOrder,
+  id: 'o-5',
+  orderNumber: 409,
+  status: 'expired',
+  createdAt: '2026-09-02T09:10:00.000Z',
+  buyer: { name: 'Helena Prado', email: 'helena@example.com' },
+  notes: undefined,
+}
+
+// All five lifecycle states, newest first — the admin table renders this list, so a missing state
+// means a status pill nobody ever sees in a story.
+export const adminOrders: AdminOrder[] = [
+  oversoldOrder,
+  shippedOrder,
+  paidOrder,
+  pendingOrder,
+  expiredOrder,
+]
 
 export const publicPaidOrder: PublicOrder = {
   orderNumber: 411,
@@ -1092,7 +1129,7 @@ export const publicPaidOrder: PublicOrder = {
 Create `apps/web/src/fixtures/checkout.ts`:
 
 ```ts
-import type { CheckoutRequest, FieldErrors, TotalsLine } from '@shop/shared'
+import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRules } from '@shop/shared'
 import { drawing, letter } from './products'
 
 const buyer: CheckoutRequest['buyer'] = {
@@ -1146,12 +1183,30 @@ export const digitalCheckout: CheckoutRequest = {
 }
 
 /** What the checkout page shows after submitting an incomplete Brazilian address. */
-export const brCheckoutErrors: FieldErrors = {
-  'buyer.name': ['required'],
-  'shippingAddress.postalCode': ['invalid_cep'],
-  'shippingAddress.number': ['required'],
-  shippingMethod: ['required'],
+/**
+ * An incomplete Brazilian address, kept next to the errors it produces so the two cannot drift.
+ */
+export const incompleteBrCheckout: CheckoutRequest = {
+  ...brCheckout,
+  shippingAddress: {
+    country: 'BR',
+    postalCode: '3015',
+    street: 'Rua Sapucaí',
+    number: '',
+    city: 'Belo Horizonte',
+    state: '',
+  },
+  shippingMethod: undefined,
 }
+
+/**
+ * What the checkout page actually receives from the API after submitting that address. DERIVED
+ * from the real rules rather than written by hand: `apps/api/src/routes/checkout.ts:36-37` passes
+ * `checkoutRules(...)` straight into the 400 response, so this object's shape is that function's
+ * output and nothing else — in particular it never carries `buyer.*` keys, which zod rejects
+ * earlier and separately.
+ */
+export const brCheckoutErrors: FieldErrors = checkoutRules(incompleteBrCheckout, true) as FieldErrors
 
 export const cartLines: TotalsLine[] = [
   { priceCents: letter.priceCents, qty: 1, type: 'physical' },
