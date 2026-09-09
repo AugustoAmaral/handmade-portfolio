@@ -166,7 +166,7 @@ apps/web/src/
                            PhotosEditor, SpecsEditor, OrdersList, OrderDetail, TrackingInlineForm
     pages/                 ShopShell, HomePage, ProductPage, AboutPage, CheckoutPage, DonePage,
                            AdminShell, AdminLoginPage, AdminProductsPage, AdminProductFormPage, AdminOrdersPage
-  i18n/                    init (react-i18next), pt.json
+  copy/                    dedicated react-i18next instance, pt.json
   fixtures/                sample data for stories and tests, typed with @shop/shared
 ```
 
@@ -253,8 +253,8 @@ Callbacks are `fn()` spies from `storybook/test`; controlled inputs use Storyboo
 |---|---|---|---|
 | 0 | `docs/v2-design` | `main` | this spec, `.gitignore` for the design export's photo files, the prototype files |
 | 1 | `feat/v2-api-domain` | 0 | shared (product/order/checkout schemas, shipping, `computeTotals`, `checkoutRules`), models, counter, checkout with pending order, webhook confirm/expire, order lookup, admin orders and products, migration script, seed, API tests |
-| 2 | `feat/v2-web-foundation` | 1 | wipe `apps/web/src`, tokens and fonts, i18n setup, Storybook + addon-vitest + decorators, vitest workspace, primitives with stories, `routes.ts`, fixtures, architecture and copy tests |
-| 3 | `feat/v2-web-storefront` | 2 | shop components, pages, containers, `LinkInterceptor`, cart/lang hooks, stories and `play` tests, container tests |
+| 2 | `feat/v2-web-foundation` | 1 | tokens and fonts, the `copy/` i18n instance, Storybook + addon-vitest + decorators, vitest projects, primitives with stories, `routes.ts`, fixtures, architecture test — all additive, alongside the untouched v1 app |
+| 3 | `feat/v2-web-storefront` | 2 | wipe the v1 `apps/web/src`, shop components, pages, containers, `LinkInterceptor`, cart/lang hooks, stories and `play` tests, container tests, copy-completeness test |
 | 4 | `feat/v2-web-admin` | 3 | admin components, pages, containers, stories, tests |
 | 5 | `feat/v2-e2e-docs` | 4 | e2e rewrite, CI changes, README and `docs/deploy.md` updates, optional Storybook publish |
 
