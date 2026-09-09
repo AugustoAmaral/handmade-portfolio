@@ -97,6 +97,8 @@ PR 2 shipped these, typed against the real `@shop/shared` schemas and deep-froze
 - `fixtures/checkout.ts` — `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, plus `brCheckoutErrors` and `buyerCheckoutErrors` (**derived by running the real `checkoutRules` and the real zod schema**, not hand-written, so the error stories cannot drift from what the API actually emits), and `cartLines` for totals.
 - `fixtures/orders.ts` — `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (admin shapes, mostly PR 4), and `publicPendingOrder` / `publicPaidOrder` — the two `DonePage` stories need exactly these.
 
+**Known fixture ceilings, measured in Task 7 — do not write a story that needs more than these without extending the fixtures first:** the richest product (`letter`) has **two photos**, not three, and **three specs**, not four. This plan asked for a three-photo gallery story and a four-spec table story; neither is expressible as shipped. Vary a fixture by spreading it in the story file (which `freeze.ts` and `fixtures.test.ts` both document as the supported way) rather than adding a `products.ts` export, since a new export silently escapes `fixtures.test.ts`'s hand-maintained `allProducts` list.
+
 If a story needs a state none of these cover, add a fixture rather than an inline literal: `test/fixtures.test.ts` validates every export against the schemas, so a fixture is checked and a literal is not.
 
 
@@ -1300,7 +1302,12 @@ A product with **no photos** must render the paper-coloured placeholder from spe
 ```tsx
 export const SelectingAThumbReportsItsIndex: Story = {
   play: async ({ args, canvas, userEvent }) => {
-    await userEvent.click(canvas.getAllByRole('button', { name: /detalhe|foto/i })[1]!)
+    // ⚠️ The draft queried /detalhe|foto/i. "Detalhe" comes from the prototype's thumbnail
+    // placeholders, which the extract (§4.7) says are EDITOR INSTRUCTIONS, not alt text — against
+    // the fixtures, `letter.photos[0].alt.pt` is "Carta sobre a mesa" and matches neither
+    // alternative, so this returned a one-element array and clicked `undefined`. Query the
+    // accessible name the component actually gives the control.
+    await userEvent.click(canvas.getAllByRole('button', { name: /foto/i })[1]!)
     await expect(args.onSelectPhoto).toHaveBeenCalledWith(1)
   },
 }
@@ -1500,6 +1507,10 @@ Containers are the only place with state, effects, IO and routing. They are thin
 - [ ] **Step 1: `ShopShellContainer`**
 
 Owns `useCart`, `useLang`, and `drawerOpen`. Opens the drawer on add-to-cart and on the header's bag button. **This is where the drawer's Escape handler and focus management live** — the component cannot do it, and Task 5 recorded that. Render `<Outlet/>` for the child routes.
+
+- [ ] **Step 1b: Decide `selectedPhoto`'s clamping contract** (raised by Task 7, which owns the component but not the state)
+
+`ProductRoute` holds the selection and react-router keeps the component mounted across slug changes, so an index the new product has no photo for is reachable in normal use. `ProductGallery` degrades to the placeholder rather than throwing — but a stale index silently shows "no photo" over a product that has photos. Reset on product change, or clamp; decide, implement, and pin it with a test that navigates between two products with different photo counts.
 
 - [ ] **Step 2: `CheckoutRoute` — the one with real logic**
 
