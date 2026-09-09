@@ -858,12 +858,12 @@ git commit -m "feat(web): route href builders for the ui layer"
 ### Task 7: Typed fixtures
 
 **Files:**
-- Create: `apps/web/src/fixtures/products.ts`, `apps/web/src/fixtures/orders.ts`, `apps/web/src/fixtures/checkout.ts`
+- Create: `apps/web/src/fixtures/freeze.ts`, `apps/web/src/fixtures/products.ts`, `apps/web/src/fixtures/orders.ts`, `apps/web/src/fixtures/checkout.ts`
 - Test: `apps/web/test/fixtures.test.ts`
 
 **Interfaces:**
 - Consumes: `PublicProduct`, `AdminOrder`, `PublicOrder`, `CheckoutRequest`, `checkoutRequestSchema`, `checkoutRules`, `computeTotals` from `@shop/shared`.
-- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (all five states), `publicPaidOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, `brCheckoutErrors`, `cartLines` from `checkout.ts`.
+- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (all five states), `publicPaidOrder`, `publicPendingOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, `brCheckoutErrors`, `buyerCheckoutErrors`, `cartLines` from `checkout.ts`; `deepFreeze` from `freeze.ts`.
 
 Amended 2026-09-09 after the first implementation, on three defects it surfaced in its own report rather than hiding.
 
@@ -892,22 +892,54 @@ describe('fixtures', () => {
     expect(products.some((p) => p.stock === 0)).toBe(true)
   })
 
-  it('offers checkout values the real schema and rules accept', () => {
-    for (const values of [brCheckout, intlCheckout, digitalCheckout]) {
+  it('offers physical checkout values the real schema and rules accept', () => {
+    // Only the physical ones: `checkoutRules` returns null immediately when hasPhysical is false,
+    // so asserting toBeNull() for the digital fixture would pass no matter what it contained.
+    for (const values of [brCheckout, intlCheckout]) {
       const parsed = checkoutRequestSchema.parse(values)
-      const hasPhysical = values !== digitalCheckout
-      expect(checkoutRules(parsed, hasPhysical)).toBeNull()
+      expect(checkoutRules(parsed, true)).toBeNull()
     }
   })
 
-  it('has cart lines whose totals add up', () => {
+  it('offers a digital checkout that needs no address', () => {
+    const parsed = checkoutRequestSchema.parse(digitalCheckout)
+    expect(parsed.shippingAddress).toBeUndefined()
+    expect(parsed.shippingMethod).toBeUndefined()
+    expect(computeTotals([{ priceCents: parsed.items[0]!.qty * 4500, qty: 1, type: 'digital' }], undefined).shippingCents).toBe(0)
+  })
+
+  it('has cart lines whose totals match the paid order', () => {
+    // Anchored on independent numbers: `totalCents === itemsCents + shippingCents` is true by
+    // construction of computeTotals and would hold for any cart at all.
     const totals = computeTotals(cartLines, 'sedex')
-    expect(totals.itemsCents).toBeGreaterThan(0)
-    expect(totals.totalCents).toBe(totals.itemsCents + totals.shippingCents)
+    expect(totals).toEqual(paidOrder.amounts)
+    expect(totals.totalCents).toBe(publicPaidOrder.totalCents)
   })
 
   it('covers every admin order status', () => {
-    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(['pending', 'paid', 'shipped', 'oversold']))
+    // Derived from the shared union, so a sixth state added upstream fails here instead of
+    // silently going unrendered by every story.
+    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(ORDER_STATUSES))
+  })
+
+  it('exposes the checkout errors the API can really send', () => {
+    expect(Object.keys(brCheckoutErrors).sort()).toEqual([
+      'shippingAddress.district',
+      'shippingAddress.number',
+      'shippingAddress.postalCode',
+      'shippingAddress.state',
+      'shippingMethod',
+    ])
+    // The rules never key on the buyer; a buyer error arrives from the zod path instead, in its
+    // own response, which is what `buyerCheckoutErrors` is for.
+    expect(Object.keys(brCheckoutErrors).filter((k) => k.startsWith('buyer'))).toEqual([])
+    expect(Object.keys(buyerCheckoutErrors).every((k) => k.startsWith('buyer'))).toBe(true)
+  })
+
+  it('freezes the fixtures so one story cannot corrupt another', () => {
+    expect(() => {
+      ;(letter.specs as unknown as unknown[]).push({})
+    }).toThrow()
   })
 })
 ```
@@ -917,7 +949,39 @@ describe('fixtures', () => {
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/fixtures.test.ts`
 Expected: FAIL — cannot find the fixture modules.
 
+- [ ] **Step 3a: The freeze helper**
+
+Create `apps/web/src/fixtures/freeze.ts`:
+
+```ts
+/**
+ * Fixtures are shared constants: many of them are built by spreading another one, so their nested
+ * objects and arrays are the SAME references (`productWithoutPhotos.specs === letter.specs`, every
+ * order sharing one `shippingAddress`). Rebuilding each nested literal by hand would be verbose
+ * and would still rot. Freezing them instead turns a story that mutates a fixture from a silent
+ * corruption of some other story into an immediate TypeError, which is the failure mode we want.
+ * Spreading a frozen object to override fields still works, which is how stories should vary them.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value && (typeof value === 'object' || typeof value === 'function') && !Object.isFrozen(value)) {
+    Object.freeze(value)
+    for (const key of Reflect.ownKeys(value)) {
+      deepFreeze((value as Record<PropertyKey, unknown>)[key])
+    }
+  }
+  return value
+}
+```
+
 - [ ] **Step 3: Implement the product fixtures**
+
+Every exported fixture in Steps 3-5 is wrapped in `deepFreeze(...)`.
+
+Each product must carry its OWN `description` and `specs` written for that product. Several of them
+are built by spreading another product, and the first implementation inherited the parent's prose:
+the pencil portrait described itself as an India ink drawing, the PDF guide as a handwritten letter
+posted to you, the notebook as a letter. A product-detail story showing a description that belongs
+to a different product is a content defect, not a nit — write real pt/en text for each.
 
 Create `apps/web/src/fixtures/products.ts`:
 
@@ -1026,6 +1090,21 @@ export const products: PublicProduct[] = [letter, drawing, soldOutDrawing, digit
 
 - [ ] **Step 4: Implement the order fixtures**
 
+Three requirements the first implementation missed, all of them because orders are built by
+spreading `paidOrder`:
+
+- **The timeline must be internally consistent.** `shippedOrder` inherited `paidAt` while
+  overriding `createdAt`/`shippedAt` and ended up shipped four days before it was paid;
+  `oversoldOrder` ended up paid before it was created. Every order must satisfy
+  `createdAt <= paidAt <= shippedAt` for whichever of those it has. An admin order-detail story
+  renders this as a timeline, so a backwards one is visible, not theoretical.
+- **`stripeSessionId` must be unique per order.** Three orders shared `cs_test_411`, which points
+  three admin rows at one Stripe session.
+- **Add `publicPendingOrder`.** The spec's Done page covers both pending and paid
+  (`docs/superpowers/specs/2026-09-07-webshop-v2-design.md`, Done page), and only the paid shape
+  existed, so the pending variant had no fixture to render from.
+
+
 Create `apps/web/src/fixtures/orders.ts`:
 
 ```ts
@@ -1103,7 +1182,7 @@ export const expiredOrder: AdminOrder = {
   notes: undefined,
 }
 
-// All five lifecycle states, newest first — the admin table renders this list, so a missing state
+// All five lifecycle states — the admin table renders this list, so a missing state
 // means a status pill nobody ever sees in a story.
 export const adminOrders: AdminOrder[] = [
   oversoldOrder,
@@ -1138,6 +1217,11 @@ const buyer: CheckoutRequest['buyer'] = {
   phone: '+55 31 98812-4407',
 }
 
+/**
+ * Initial form state, deliberately NOT schema-valid: it is typed `CheckoutRequest` for the form's
+ * benefit but fails `checkoutRequestSchema` on the empty name and email. Never feed it to
+ * `.parse` — render it, fill it in, then parse.
+ */
 export const emptyCheckout: CheckoutRequest = {
   items: [{ slug: letter.slug, qty: 1 }],
   locale: 'pt',
@@ -1182,7 +1266,6 @@ export const digitalCheckout: CheckoutRequest = {
   buyer,
 }
 
-/** What the checkout page shows after submitting an incomplete Brazilian address. */
 /**
  * An incomplete Brazilian address, kept next to the errors it produces so the two cannot drift.
  */
@@ -1206,7 +1289,27 @@ export const incompleteBrCheckout: CheckoutRequest = {
  * output and nothing else — in particular it never carries `buyer.*` keys, which zod rejects
  * earlier and separately.
  */
-export const brCheckoutErrors: FieldErrors = checkoutRules(incompleteBrCheckout, true) as FieldErrors
+// Narrowed rather than cast: `checkoutRules` returns `FieldErrors | null`, and `as FieldErrors`
+// would turn a future non-violating input into a null wearing the wrong type, surfacing as an
+// obscure TypeError inside whichever story reads a key off it.
+const derivedBrCheckoutErrors = checkoutRules(incompleteBrCheckout, true)
+if (!derivedBrCheckoutErrors) {
+  throw new Error('incompleteBrCheckout must violate the BR rules: brCheckoutErrors is derived from them')
+}
+
+export const brCheckoutErrors: FieldErrors = deepFreeze(derivedBrCheckoutErrors)
+
+/**
+ * The OTHER shape the checkout page can receive. `apps/api/src/errors.ts:26-33` turns a ZodError
+ * into `fieldErrors` keyed by `issue.path.join('.')`, so a bad buyer arrives as a 400 with the
+ * same field name and the same code — just never mixed with rule errors, because the parse at
+ * `routes/checkout.ts:21` happens before the rules at :36. Note the values: the rules emit stable
+ * codes, zod emits raw English prose, so the checkout UI cannot translate both through one table.
+ */
+export const buyerCheckoutErrors: FieldErrors = deepFreeze({
+  'buyer.name': ['String must contain at least 2 character(s)'],
+  'buyer.email': ['Invalid email'],
+})
 
 export const cartLines: TotalsLine[] = [
   { priceCents: letter.priceCents, qty: 1, type: 'physical' },
@@ -1217,7 +1320,7 @@ export const cartLines: TotalsLine[] = [
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/fixtures.test.ts`
-Expected: PASS (4 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
+Expected: PASS (8 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
 
 - [ ] **Step 7: Commit**
 
