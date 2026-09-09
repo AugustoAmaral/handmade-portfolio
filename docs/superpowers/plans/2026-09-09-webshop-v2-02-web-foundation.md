@@ -1230,6 +1230,25 @@ git commit -m "feat(web): typed fixtures for stories and tests"
 
 ### Task 8: The UI purity rule, enforced
 
+
+Amended 2026-09-09 after the first implementation reported four ways the guard could be walked
+past — it found them by probing its own test rather than by declaring victory when it went green.
+Two are closed here.
+
+The forbidden-prefix list only reached `../../`, so any file nested two levels under `src/ui`
+escaped every relative rule with `../../../lib`. PR 3 fills this directory, so that hole would
+have opened exactly when it started to matter. The rule is now an allowlist: a bare specifier must
+be one of the four packages the layer is allowed to know about, and a relative specifier must
+resolve to a path inside `src/ui`.
+
+The scan also only matched `from '...'`, leaving side-effect imports, dynamic `import()` and
+`require()` invisible. All four forms are now matched.
+
+Two gaps are accepted rather than closed, and recorded so nobody rediscovers them as bugs:
+`*.stories.tsx` files are deliberately exempt (they must import the storybook packages, and they
+already run as tests in the browser project), and the globals check is a raw-source scan, so
+`document.` inside a comment is a false positive — loud, harmless and easy to fix when it happens.
+
 **Files:**
 - Test: `apps/web/test/ui-boundaries.test.ts`
 
@@ -1247,31 +1266,43 @@ import { describe, expect, it } from 'vitest'
 
 const UI_DIR = path.join(__dirname, '..', 'src', 'ui')
 
-const FORBIDDEN_IMPORTS = [
-  'react-router',
-  '@tanstack/react-query',
-  '../app',
-  '../../app',
-  '../lib',
-  '../../lib',
-  '../pages',
-  '../../pages',
-  '../components',
-  '../../components',
-  '../i18n',
-  '../../i18n',
+// The UI layer declares what it MAY import rather than what it may not. A blacklist of relative
+// prefixes only reaches as deep as the prefixes someone remembered to write: a file two levels
+// down under src/ui escapes `../lib` and `../../lib` with `../../../lib`. Resolving the path and
+// asking whether it stayed inside src/ui has no such hole.
+const ALLOWED_PACKAGES = ['react', 'react-dom', 'react-i18next', '@shop/shared']
+
+// Four ways into the module graph. A check that only sees `from '...'` leaves the other three
+// doors open — side-effect imports, dynamic imports and require all reach the same modules.
+const SPECIFIER_PATTERNS = [
+  /\bfrom\s+['"]([^'"]+)['"]/g,
+  /\bimport\s+['"]([^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ]
 
-// Browser globals: the UI layer is rendered by the app layer and by Storybook, and must not
-// reach for state that only exists in one of them.
 const FORBIDDEN_GLOBALS = [/\bwindow\./, /\bdocument\./, /\blocalStorage\b/, /\bsessionStorage\b/, /\bfetch\(/]
 
+// Stories are exempt on purpose: they import the storybook packages by necessity, and they are
+// already executed as tests by the browser project, so a broken one fails there.
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = path.join(dir, entry)
     if (statSync(full).isDirectory()) return walk(full)
     return /\.tsx?$/.test(entry) && !/\.stories\.tsx?$/.test(entry) ? [full] : []
   })
+}
+
+function specifiersOf(source: string): string[] {
+  return SPECIFIER_PATTERNS.flatMap((pattern) => [...source.matchAll(pattern)].map((m) => m[1]!))
+}
+
+function isAllowed(specifier: string, file: string): boolean {
+  if (specifier.startsWith('.')) {
+    const resolved = path.resolve(path.dirname(file), specifier)
+    return resolved === UI_DIR || resolved.startsWith(`${UI_DIR}${path.sep}`)
+  }
+  return ALLOWED_PACKAGES.some((p) => specifier === p || specifier.startsWith(`${p}/`))
 }
 
 describe('ui layer boundaries', () => {
@@ -1283,12 +1314,8 @@ describe('ui layer boundaries', () => {
 
   it.each(files.map((f) => [path.relative(UI_DIR, f), f]))('%s imports nothing stateful', (_name, file) => {
     const source = readFileSync(file, 'utf8')
-    const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!)
-    for (const specifier of imports) {
-      expect(
-        FORBIDDEN_IMPORTS.some((f) => specifier === f || specifier.startsWith(`${f}/`)),
-        `${specifier} is not allowed in src/ui`,
-      ).toBe(false)
+    for (const specifier of specifiersOf(source)) {
+      expect(isAllowed(specifier, file), `${specifier} is not allowed in src/ui`).toBe(true)
     }
   })
 
