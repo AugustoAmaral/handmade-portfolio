@@ -1,3 +1,6 @@
+export * from './AboutBlocks'
+export * from './AboutClosing'
+export * from './AboutFacts'
 export * from './CartDrawer'
 export * from './CartLine'
 export * from './CatalogGrid'
