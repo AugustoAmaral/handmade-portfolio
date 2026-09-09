@@ -39,6 +39,7 @@ One finding from the extraction reshapes those tasks: **the prototype contains z
   1. **`toHaveTextContent` matches by SUBSTRING.** `toHaveTextContent('/')` is satisfied by `'/about'`. Task 4 found nine guard mutations passing green behind one of these. Use `expect(el.textContent).toBe(...)` when you mean equality.
   2. **A throw inside a React event handler does not fail a test.** React re-publishes it as an unhandled window error: the test stays green and only the process exit code goes non-zero. So a guard whose absence causes a null-deref is caught by `vitest run` as a whole, but by no assertion — do not count it as proved.
 - **i18next plural suffixes are structurally unavailable here.** `copy.test.ts` asserts that `pt.json` carries no key nothing accounts for, and a `_one`/`_other` suffixed key is only ever reached through its base — no literal `t('…')` call site names it, so the test reddens. Task 6 hit this on `{{count}} peças`, which prints "1 peças" for a one-item catalogue (the prototype has the same bug). The idiom on this branch is **two explicit keys plus a condition** (`1 piece` / `{{count}} pieces`), which is correct for both languages and visible to the scanner. Task 13 must decide whether to teach the test about suffixes or bless this idiom — until then, the repo silently forbids correct pluralisation, which is a landmine for any language with more than two plural forms.
+- **When an implementer names what their task left uncovered, that is an ACTION ITEM, not a footnote.** Task 1 reported, unprompted, that it wrote no test for `queries.ts` and that `useOrder`'s two real decisions were therefore uncovered. That was recorded and not acted on. Ten tasks later Task 11 found the query hooks never unwrapped the API envelopes at all — `/api/products` answers `{ products }`, `/api/products/:slug` answers `{ product }`, `/api/orders/:n` answers `{ order }`, and all three were typed as the bare value. Every container would have read the envelope as its payload. Nothing could have caught it: the only test asked for was a client test, and no consumer existed yet. **A layer with no consumer has no test that means anything — either write the consumer's test with it, or treat the gap as open work.**
 - **Every new assertion must be proved able to fail** by mutating what it guards, and the proof reported. An assertion that cannot fail is deleted, not kept "for coverage". PR 2 shipped ten of them before this standard was enforced.
 - Run vitest with `NODE_OPTIONS=--max-old-space-size=4096`. The machine guardrail lives at the ROOT of `apps/web/vitest.config.ts` (`maxWorkers: 2`, `minWorkers: 1`, `poolOptions.forks.{minForks:1,maxForks:2}`) — **never move it inside a project, where it is silently ignored.** After a run check orphans: `ps ax -o pid,ppid,command | grep -i vitest | grep -v grep`, kill any with ppid 1.
 - Commits in English, conventional-commit noun-phrase subjects, **no trailers** (no `Co-Authored-By`, no `Claude-Session`). The branch below has zero across 47 commits; keep it that way.
@@ -1642,10 +1643,14 @@ describe('CheckoutRoute', () => {
       { slug: digitalLetter.slug, qty: 1 },
     ]))
     stubFetch((url, init) => {
+      // ⚠️ The draft posited 409 with `fieldErrors: { slug: [...] }`. `routes/checkout.ts` throws
+      // 400 with NO fieldErrors — the slug appears only inside the message. Use the real shape;
+      // a test written against an invented envelope proves the container handles a response the
+      // API never sends.
       if (init?.method === 'POST') {
-        return json({ error: { code: 'OUT_OF_STOCK', message: 'sem estoque', fieldErrors: { slug: [letter.slug] } } }, 409)
+        return json({ error: { code: 'OUT_OF_STOCK', message: `Not enough stock for: ${letter.slug}` } }, 400)
       }
-      return json([letter, digitalLetter])
+      return json({ products: [letter, digitalLetter] })
     })
     renderAt('/checkout', <CheckoutRoute />, '/checkout')
 
@@ -1743,6 +1748,12 @@ Everything before this task was additive. This is the one commit where the v1 ap
 - Produces: a booting v2 app. Nothing later depends on its exports.
 
 > **This task deletes files. Before running any `rm`, confirm out loud: the branch is `feat/v2-web-storefront`, `git status` is clean apart from this task's own work, and the deletions match the list above exactly — no `src/ui`, no `src/copy`, no `src/fixtures`, and none of the six surviving test files.** The list is not a suggestion; PR 2's output lives in the same directory and a wildcard takes it with the rest.
+
+- [ ] **Step 0: Add the loading and error screens the design never drew** (raised by Task 11)
+
+There is no loading state and no error state anywhere in this app. `HomeRoute` renders nothing while the first fetch is in flight and falls back to the catalogue's EMPTY state on failure — **a shop that is down and a shop with nothing to sell look identical**. `ProductRoute` renders a blank page for a mistyped slug. Neither the design nor the spec has copy for either, and Task 11 correctly refused to invent it in a container: `src/app` is not scanned by `copy.test.ts`, so a sentence written there ships as fluent English to a Portuguese reader.
+
+Add the states to the pages in `src/ui/pages/` (where the copy scanner can see them), give each a story, and wire the containers. A not-found product needs a real screen, not an empty one.
 
 - [ ] **Step 1: Write the new entry points**
 
