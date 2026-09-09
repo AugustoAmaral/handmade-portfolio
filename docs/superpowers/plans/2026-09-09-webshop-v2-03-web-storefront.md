@@ -27,6 +27,9 @@ One finding from the extraction reshapes those tasks: **the prototype contains z
 - Design tokens (already in `index.css`, do not redefine): `--color-paper #f4f0e6`, `--color-paper-2 #efe9db`, `--color-paper-3 #e6dfcd`, `--color-ink #1a1713`, `--color-accent #a63d20`; `--font-display 'Instrument Serif'`, `--font-body Newsreader`, `--font-mono 'IBM Plex Mono'`.
 - **Accessibility is a gate, not a review comment.** `.storybook/preview.tsx` sets `a11y: { test: 'error' }`, so every new story must pass axe. Page-scale rules that never fired on isolated primitives WILL fire now: `region` (all content in landmarks), `heading-order`, `landmark-unique`, `page-has-heading-one`. Fix the component; never disable the rule.
 - **Contrast floors, measured not eyeballed:** 4.5:1 for normal text, 3:1 for text ≥24px and for focus indicators (WCAG 2.2 SC 2.4.11). PR 2 had to raise three opacities and rewrite the focus ring for exactly this. Muted text below `opacity-65` on paper does not clear AA.
+- **Two assertion traps measured on this branch, both of which produced green tests that meant nothing:**
+  1. **`toHaveTextContent` matches by SUBSTRING.** `toHaveTextContent('/')` is satisfied by `'/about'`. Task 4 found nine guard mutations passing green behind one of these. Use `expect(el.textContent).toBe(...)` when you mean equality.
+  2. **A throw inside a React event handler does not fail a test.** React re-publishes it as an unhandled window error: the test stays green and only the process exit code goes non-zero. So a guard whose absence causes a null-deref is caught by `vitest run` as a whole, but by no assertion — do not count it as proved.
 - **Every new assertion must be proved able to fail** by mutating what it guards, and the proof reported. An assertion that cannot fail is deleted, not kept "for coverage". PR 2 shipped ten of them before this standard was enforced.
 - Run vitest with `NODE_OPTIONS=--max-old-space-size=4096`. The machine guardrail lives at the ROOT of `apps/web/vitest.config.ts` (`maxWorkers: 2`, `minWorkers: 1`, `poolOptions.forks.{minForks:1,maxForks:2}`) — **never move it inside a project, where it is silently ignored.** After a run check orphans: `ps ax -o pid,ppid,command | grep -i vitest | grep -v grep`, kill any with ppid 1.
 - Commits in English, conventional-commit noun-phrase subjects, **no trailers** (no `Co-Authored-By`, no `Claude-Session`). The branch below has zero across 47 commits; keep it that way.
@@ -767,16 +770,72 @@ This is what lets every UI component render a real `<a href>` and still get clie
 
 ```tsx
 // apps/web/test/app/link-interceptor.test.tsx
-import { render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { type AnchorHTMLAttributes, type ReactNode } from 'react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { afterEach, describe, expect, it } from 'vitest'
 import { LinkInterceptor } from '../../src/app/LinkInterceptor'
 
-function renderWithRouter(children: React.ReactNode) {
+// Testing-library only auto-unmounts when vitest runs with `globals: true`, and this project does
+// not. Without this, every `screen` query after the first test also sees the previous renders and
+// the file dies on "found multiple elements" instead of on anything it means to assert.
+afterEach(cleanup)
+
+// The router's own idea of where it is, spelled exactly the way the interceptor spells it.
+// Asserting on the rendered route alone would prove the path and silently drop the query and the
+// fragment, which is the half of a location that a naive interceptor loses.
+function Here() {
+  const { pathname, search, hash } = useLocation()
+  return <output data-testid="here">{pathname + search + hash}</output>
+}
+
+// `.textContent`, never `toHaveTextContent('/')`: that matcher takes a string as a SUBSTRING, so
+// '/about' satisfies it and the assertion passes after a navigation it was written to forbid.
+// Measured, not assumed — with the matcher in place, nine separate guard mutations sailed past
+// this line and were caught only by the `defaultPrevented` assertion after it.
+function currentLocation() {
+  return screen.getByTestId('here').textContent
+}
+
+// A hand-built event rather than `userEvent`: these are the cases the browser really would act on,
+// and `button` and the modifier flags have to be set exactly. jsdom does act on them — an
+// uncancelled link click schedules a real navigation, surfacing as "Not implemented: navigation"
+// from a timer that fires after the test has already finished.
+//
+// So the outcome is read the way `AnchorGuard.stories.tsx` reads it, for the same reason and in
+// the same order: the interceptor decides in the CAPTURE phase, so by the BUBBLE phase the flag
+// is its decision. Record first, cancel second. In Chromium that story is buying back the
+// runner's own page; here it is only buying quiet, but a test whose failure mode is a stray async
+// log is a test nobody reads.
+function clickAndReportOutcome(anchor: Element, init: MouseEventInit = {}): boolean | undefined {
+  let intercepted: boolean | undefined
+  const record = (event: Event) => {
+    intercepted = event.defaultPrevented
+    event.preventDefault()
+  }
+  document.addEventListener('click', record)
+  try {
+    // `act`, even though a raw `dispatchEvent` is synchronous: React queues the state update from
+    // a `navigate()` outside act and does not flush it, so `Here` keeps rendering the OLD route
+    // and any "the route did not change" assertion passes while a navigation is pending. Measured
+    // — without this, nine guard mutations navigated and the route assertion below stayed green.
+    act(() => {
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }))
+    })
+  } finally {
+    document.removeEventListener('click', record)
+  }
+  // `undefined` means the click never reached the document, which is a broken test rather than a
+  // fall-through — it fails the comparisons below instead of passing as "not intercepted".
+  return intercepted
+}
+
+function renderWithRouter(children: ReactNode) {
   return render(
     <MemoryRouter initialEntries={['/']}>
       <LinkInterceptor>{children}</LinkInterceptor>
+      <Here />
       <Routes>
         <Route path="/" element={<p>home</p>} />
         <Route path="/about" element={<p>about page</p>} />
@@ -789,35 +848,114 @@ describe('LinkInterceptor', () => {
   it('navigates client-side for a plain same-origin anchor', async () => {
     renderWithRouter(<a href="/about">About</a>)
     await userEvent.click(screen.getByText('About'))
-    expect(await screen.findByText('about page')).toBeInTheDocument()
+    // `queryByText`, not `findByText(...)` + `toBeInTheDocument()`: `findByText` already throws
+    // when the text is absent, so the matcher after it can never be the thing that fails.
+    expect(screen.queryByText('about page')).toBeInTheDocument()
   })
 
   it('navigates when the click lands on a child of the anchor', async () => {
     // Real clicks land on the <span>, not the <a>. A handler that reads `event.target` as the
-    // anchor works in a story with bare text and fails on every composed component.
-    renderWithRouter(<a href="/about"><span>Nested</span></a>)
+    // anchor works in a story with bare text and fails on every composed component — and every
+    // link in this design is composed: a card title, a thumbnail, an eyebrow above a heading.
+    renderWithRouter(
+      <a href="/about">
+        <span>Nested</span>
+      </a>,
+    )
     await userEvent.click(screen.getByText('Nested'))
-    expect(await screen.findByText('about page')).toBeInTheDocument()
+    expect(screen.queryByText('about page')).toBeInTheDocument()
   })
 
-  it.each([
-    ['a modifier key is held', { href: '/about' }, { ctrlKey: true }],
+  it('carries the query string and the fragment, not just the path', async () => {
+    // Both are live in this design: `routes.thanks()` builds a query and the product page links
+    // to `#specs`. Navigating with the path alone renders the right screen while losing the
+    // filter and the scroll target, so nothing that checks the rendered route can catch it.
+    renderWithRouter(<a href="/about?from=card#specs">Deep</a>)
+    await userEvent.click(screen.getByText('Deep'))
+    expect(currentLocation()).toBe('/about?from=card#specs')
+  })
+
+  it('cancels the click it takes over, so the browser does not also load the page', () => {
+    // The other half of interception, and invisible to every route assertion in this file: an
+    // interceptor that navigates client-side WITHOUT cancelling leaves the browser to do a full
+    // page load on top, which under jsdom is a stray log and in a browser is the whole SPA
+    // reloading on every link. This is `SameOriginClickIsIntercepted` from the story twin.
+    renderWithRouter(<a href="/about">About</a>)
+    expect(clickAndReportOutcome(screen.getByText('About'))).toBe(true)
+  })
+
+  it('intercepts target="_self", which is the explicit spelling of "no target"', async () => {
+    // Pins the `!== '_self'` half of the target guard. Without it, every anchor that spells out
+    // the default browsing context drops to a full page load — a real regression that looks like
+    // "the target guard works" if `_blank` is the only case tested.
+    renderWithRouter(
+      <a href="/about" target="_self">
+        Self
+      </a>,
+    )
+    await userEvent.click(screen.getByText('Self'))
+    expect(screen.queryByText('about page')).toBeInTheDocument()
+  })
+
+  it('leaves a click that is not inside a link alone, on a page that has links', async () => {
+    // The link is here on purpose. The failure this guards is not "the interceptor crashed on a
+    // button" but "the interceptor found SOME link and followed it" — the shape a `CartLine` hits
+    // when its stepper sits next to a link to the product. With no anchor in the tree, a lookup
+    // that ignores `event.target` entirely still finds nothing and the test proves nothing.
+    renderWithRouter(
+      <>
+        <a href="/about">About</a>
+        <button type="button">Add to bag</button>
+      </>,
+    )
+    await userEvent.click(screen.getByRole('button'))
+    expect(currentLocation()).toBe('/')
+  })
+
+  it('does not navigate when something above the root already handled the click', async () => {
+    // Capture phase is not first in line: a native listener on `document` runs before React's,
+    // which is bound to the root container. A click that has already been cancelled has already
+    // been decided by whoever cancelled it, and re-deciding it here is how an interceptor turns
+    // "dismiss the drawer" into "dismiss the drawer AND follow the link underneath".
+    // `defaultPrevented` is true either way here, so the route is the only observable difference.
+    const cancel = (event: Event) => event.preventDefault()
+    document.addEventListener('click', cancel, true)
+    try {
+      renderWithRouter(<a href="/about">About</a>)
+      await userEvent.click(screen.getByText('About'))
+      expect(currentLocation()).toBe('/')
+    } finally {
+      document.removeEventListener('click', cancel, true)
+    }
+  })
+
+  // Every row is a separate `if` in the component, and the four modifier keys are separate
+  // operands of one `||`. A mutation that deletes the whole early-return block reddens all of
+  // them at once and proves none of them individually, so each reason gets its own row.
+  const fallThrough: Array<[string, AnchorHTMLAttributes<HTMLAnchorElement>, MouseEventInit]> = [
+    ['the meta key is held', { href: '/about' }, { metaKey: true }],
+    ['the ctrl key is held', { href: '/about' }, { ctrlKey: true }],
+    ['the shift key is held', { href: '/about' }, { shiftKey: true }],
+    ['the alt key is held', { href: '/about' }, { altKey: true }],
+    ['the click is not the primary button', { href: '/about' }, { button: 1 }],
     ['the anchor has target', { href: '/about', target: '_blank' }, {}],
     ['the anchor has download', { href: '/about', download: '' }, {}],
     ['the anchor is cross-origin', { href: 'https://example.com/x' }, {}],
     ['the href is a mailto', { href: 'mailto:a@b.c' }, {}],
-  ])('falls through to the browser when %s', async (_case, anchorProps, clickInit) => {
-    const { container } = renderWithRouter(<a {...anchorProps}>Link</a>)
-    const anchor = screen.getByText('Link')
+  ]
 
-    const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...clickInit })
-    anchor.dispatchEvent(event)
+  it.each(fallThrough)('falls through to the browser when %s', (_case, anchorProps, clickInit) => {
+    renderWithRouter(<a {...anchorProps}>Link</a>)
 
-    // Not "the route did not change" — that is also true while a navigation is pending. The
-    // contract is that the interceptor did not call preventDefault, leaving the click to the
-    // browser, which jsdom reports as the event still being cancelable-but-uncancelled.
-    expect(event.defaultPrevented).toBe(false)
-    expect(container.textContent).toContain('home')
+    const intercepted = clickAndReportOutcome(screen.getByText('Link'), clickInit)
+
+    // Two claims, and each is the first to break under a different mutation. The router did not
+    // take it: deleting any single guard navigates and reddens this line. And the browser still
+    // gets it: an interceptor that cancels a click and then declines to handle it leaves the
+    // route alone while killing cmd-click, download and mailto in silence, which only the flag
+    // can see. The route goes first because it is the line the nine guard mutations reach.
+    expect(currentLocation()).toBe('/')
+    expect(intercepted).toBe(false)
   })
 })
 ```
@@ -834,42 +972,81 @@ Expected: FAIL — module not found.
 import { type MouseEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 
+// Six independent reasons to leave a click alone, each of them something a person deliberately
+// does: a middle click or a held modifier opens the link in a second tab, `target` asks for
+// another browsing context, `download` saves a file, a cross-origin or `mailto:` href leaves the
+// app entirely, and a click that is not inside a link is not a navigation at all. They are
+// separate `if`s rather than one condition because they are separate decisions — merging them
+// would make a single test able to "cover" all six while proving none of them.
+//
+// This is deliberately the same rule, line for line, as `interceptableAnchor` in
+// `.storybook/preview.tsx`, which `AnchorGuard.stories.tsx` pins in real Chromium. A story that
+// shows a link falling through is only evidence about the app if the app decides it identically.
+// The two copies exist because the preview lives outside `src/` and standing in for the app is
+// its whole job — importing the app into it would make the twin a mirror instead of a witness.
+function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  // Capture phase means "before anything inside the app sees this click", not "before anything at
+  // all". A handler bound above the root — a modal backdrop, a native listener on `document` —
+  // still runs first, and if it cancelled the click it has already decided what happens.
+  if (event.defaultPrevented) return null
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  if (!(event.target instanceof Element)) return null
+  // `closest`, not `event.target`: a real click lands on whatever is innermost — the <span> in a
+  // card title, the <img> in a thumbnail — and only equals the <a> when the link is bare text.
+  const anchor = event.target.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
+  // context, which is the browser's job and not the router's.
+  const target = anchor.getAttribute('target')
+  if (target && target !== '_self') return null
+  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
+  // non-HTTP scheme (`mailto:`, `tel:`) serialises to the string "null" and falls through here.
+  // Reading it off the element rather than building `new URL(href, location.href)` also means a
+  // malformed href can never throw out of a click handler.
+  if (anchor.origin !== window.location.origin) return null
+  return anchor
+}
+
 /**
- * One click handler at the root upgrades same-origin anchor clicks to client-side navigation, so
- * every component in `ui/` can render a real `<a href>` and none of them imports the router.
- *
- * Everything the browser owns is left to the browser: modifier keys and middle clicks (open in a
- * new tab), `target`, `download`, and any cross-origin or non-http href. `.closest('a')` is what
- * makes it work for composed content, where the click lands on a descendant of the anchor.
+ * One click handler at the app root upgrades same-origin anchor clicks to client-side navigation,
+ * so every component in `ui/` can render a real `<a href>` built from `ui/routes.ts` and none of
+ * them imports the router. The links stay real links: right-click, "copy link address", middle
+ * click and view-source all keep working, and the page is still navigable before JS has run.
  */
 export function LinkInterceptor({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
-  function onClick(event: MouseEvent<HTMLDivElement>) {
-    if (event.defaultPrevented) return
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-
-    const anchor = (event.target as Element | null)?.closest?.('a')
-    if (!anchor) return
-    if (anchor.target || anchor.hasAttribute('download')) return
-
-    const href = anchor.getAttribute('href')
-    if (!href) return
-
-    const url = new URL(href, window.location.href)
-    if (url.origin !== window.location.origin) return
-
-    event.preventDefault()
-    void navigate(url.pathname + url.search + url.hash)
-  }
-
-  return <div onClickCapture={onClick}>{children}</div>
+  return (
+    <div
+      onClickCapture={(event) => {
+        const anchor = interceptableAnchor(event)
+        if (!anchor) return
+        event.preventDefault()
+        // Path, query and fragment rather than `href`: the router wants a location inside the app,
+        // and handing it the absolute URL would make it a relative path — `/https:/localhost/…`.
+        void navigate(anchor.pathname + anchor.search + anchor.hash)
+      }}
+    >
+      {children}
+    </div>
+  )
 }
 ```
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Expected: PASS, 7 tests (2 + 5 cases).
+Expected: PASS, 16 tests (7 named + 9 `it.each` cases).
+
+> **Amended after Task 4 shipped. My draft was wrong in four places and the PR 2 twin was right in all four** — `preview.tsx` has been correct since commit 936a7ae, and I wrote this snippet from scratch instead of deriving it from the file I told the implementer to reconcile against. The corrections:
+>
+> 1. **`target="_self"` is a real behaviour bug.** `if (anchor.target || …) return` falls through on `_self`, which is the explicit spelling of "no target" — a full page load where the app should have routed.
+> 2. **`anchor.origin`, not `new URL(href, location.href)`.** Same answer on every case, but `new URL` throws on a malformed href, inside a click handler — where, per the trap above, a throw fails no assertion.
+> 3. **`closest('a[href]')`** rather than `closest('a')` plus a separate `!href` check.
+> 4. **`event.target instanceof Element`** rather than `(event.target as Element | null)?.closest?.()`. The cast plus two optional chains hid that `event.target` is an `EventTarget`; the `instanceof` narrows it without a cast and is the correct runtime check.
+>
+> **The draft's test was also passing for the wrong reason twice.** `toHaveTextContent('/')` matched `'/about'` by substring, leaving nine mutations green; and `dispatchEvent` outside `act()` left the DOM stale, so "the route did not change" was true even with a navigation pending. Both are fixed in the regenerated block above.
+>
+> **Followed by a structural change:** `interceptableAnchor` now lives in `apps/web/src/app/anchors.ts` and is imported by both `LinkInterceptor` and `.storybook/preview.tsx`. The duplication was defended as keeping the story an independent witness, but the witness only has value if somebody compares the copies, and this task is the proof that nobody does — they had drifted in four places. The failure mode also ran the wrong way: with two copies, breaking `LinkInterceptor` left `AnchorGuard.stories.tsx` green.
 
 - [ ] **Step 5: Prove the assertions can fail**
 
