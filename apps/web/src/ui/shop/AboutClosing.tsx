@@ -17,11 +17,13 @@ export interface AboutClosingProps {
  * implementation blindly, and these two bands differ in five of their own: the track floor is
  * 280px against 260px, the band bottoms out at `88px` of padding against `80px`, the statement runs
  * to `44px` against `42px` at a line height of `1.1` against `1.12`, the whole band is centred in a
- * `1240px` measure that the home band does not have, and the right-hand column is a stack of four
- * things rather than one paragraph. Sharing them means a `variant` prop that toggles five numbers.
+ * `1240px` measure that the home band does not have, and the right-hand column is two paragraphs
+ * over a row of controls rather than the home band's single paragraph. Sharing them means a
+ * `variant` prop that toggles five numbers.
  *
- * THE LINKS ARE REAL, WHICH THE DESIGN IS NOT. Both are `href="#"` in the prototype, with the
- * catalogue one carrying an `onClick` handler and no href at all. `Falar comigo` becomes the same
+ * THE LINKS ARE REAL, WHICH THE DESIGN IS NOT. `Falar comigo` is an `<a href="#">` in the
+ * prototype and `Ver o catálogo` is a `<span onClick>`, so one goes nowhere and the other is not a
+ * link at all — neither can be middle-clicked, copied or reached by Tab. `Falar comigo` becomes the same
  * `mailto:` `ClosingBlock` builds, subject included, so a message from either page lands
  * identifiable and identical in an inbox; `Ver o catálogo` becomes an `<a href>` on `routes.home()`
  * that the app root upgrades to client-side navigation. Neither is a callback: nothing happens

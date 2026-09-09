@@ -25,7 +25,7 @@ import { useTranslation } from 'react-i18next'
  *
  * TWO OF THE FOUR VALUES ARE INVISIBLE TO THE CONTRAST GATE. axe skips single-character text as a
  * suspected icon ligature, so `4` and `1` pass at any contrast; they are ink at full opacity on
- * paper, 15.9:1, judged on the merits rather than on the gate. The labels are checked and the
+ * paper, 15.7:1, judged on the merits rather than on the gate. The labels are checked and the
  * prototype's `opacity:.55` does not clear them — 3.82:1 at 11px against a 4.5:1 floor — so they
  * sit at 65%, 5.26:1, as every other muted mono label on this branch now does.
  *

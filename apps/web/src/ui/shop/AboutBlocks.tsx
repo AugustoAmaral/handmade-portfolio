@@ -25,9 +25,10 @@ import { Eyebrow } from '../primitives'
  * the provider's instance — so there is no second language to choose between and no hole to plug.
  *
  * THE TAG IS AN `Eyebrow`, NOT A HEADING. It labels the block for the eye, but the page's outline
- * is the three titles: making `01 · Como funciona` a heading would put six headings on the About
- * page where three belong, and this band is the first place on the branch with enough headings for
- * axe's `heading-order` to fire at all. Reusing the primitive normalises the tracking from the
+ * is the three titles: making `01 · Como funciona` a heading would put six headings in this band
+ * where three belong, and this band is the first place on the branch with enough headings for
+ * axe's `heading-order` to fire at all — measured, by promoting the tag to an `<h4>` and watching
+ * the rule redden on blocks two and three. Reusing the primitive normalises the tracking from the
  * prototype's `.16em` to its `.18em` — 0.02em at 11px, about a fifth of a pixel per character —
  * and carries the contrast fix already: the prototype's `opacity:.5` is 3.30:1 on paper against a
  * 4.5:1 floor, and `Eyebrow` sits at 65%, which is 5.26:1. A local copy of the primitive with the
