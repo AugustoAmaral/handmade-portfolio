@@ -1637,7 +1637,7 @@ import type { ReactNode } from 'react'
 
 export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`font-mono text-[11px] uppercase tracking-[0.18em] opacity-60 ${className}`}>{children}</div>
+    <div className={`font-mono text-[11px] uppercase tracking-[0.18em] opacity-65 ${className}`}>{children}</div>
   )
 }
 ```
@@ -1659,7 +1659,7 @@ export function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div>
       <div className="font-display text-[clamp(30px,3.4vw,42px)] leading-none">{value}</div>
-      <div className="font-mono mt-2.5 text-[11px] uppercase tracking-[0.14em] opacity-55">{label}</div>
+      <div className="font-mono mt-2.5 text-[11px] uppercase tracking-[0.14em] opacity-65">{label}</div>
     </div>
   )
 }
@@ -1684,7 +1684,7 @@ const TONE: Record<OrderStatus, string> = {
   paid: 'bg-ink text-paper',
   shipped: 'border border-ink',
   oversold: 'bg-accent text-paper',
-  expired: 'border border-ink/30 opacity-50',
+  expired: 'border border-ink/30 opacity-65',
 }
 
 export function StatusPill({ status }: { status: OrderStatus }) {
@@ -1784,7 +1784,14 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect } from 'storybook/test'
 import { StatusPill } from './StatusPill'
 
-const meta = { component: StatusPill, title: 'Primitives/StatusPill' } satisfies Meta<typeof StatusPill>
+// `status` is a required prop, so `StoryObj<typeof meta>` demands `args` on EVERY story —
+// including a gallery story that renders its own tree and never reads them. Declaring the
+// default here is what makes story-level `args` optional, so `EveryStatus` can be render-only.
+const meta = {
+  component: StatusPill,
+  title: 'Primitives/StatusPill',
+  args: { status: 'pending' },
+} satisfies Meta<typeof StatusPill>
 export default meta
 type Story = StoryObj<typeof meta>
 
@@ -1816,14 +1823,19 @@ const meta = { component: RuledList, title: 'Primitives/RuledList' } satisfies M
 export default meta
 type Story = StoryObj<typeof meta>
 
+// Rows go through `args.children` rather than a `render` override: `children` is required, so a
+// render-only story would still owe `args` it never reads. The fragment adds no DOM node, so the
+// three rows stay direct flex children of the list.
 export const ThreeRows: Story = {
-  render: () => (
-    <RuledList>
-      <RuledRow>Subtotal</RuledRow>
-      <RuledRow>Frete</RuledRow>
-      <RuledRow>Total</RuledRow>
-    </RuledList>
-  ),
+  args: {
+    children: (
+      <>
+        <RuledRow>Subtotal</RuledRow>
+        <RuledRow>Frete</RuledRow>
+        <RuledRow>Total</RuledRow>
+      </>
+    ),
+  },
 }
 ```
 
