@@ -1,1 +1,15 @@
 @import 'tailwindcss';
+
+/* v2 design tokens (paper/ink palette from the approved prototype). The v1 app still uses
+   Tailwind's stock stone-* utilities; these are additive and do not change it. */
+@theme {
+  --color-paper: #f4f0e6;
+  --color-paper-2: #efe9db;
+  --color-paper-3: #e6dfcd;
+  --color-ink: #1a1713;
+  --color-accent: #a63d20;
+
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-body: Newsreader, Georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
