@@ -403,6 +403,14 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   test: {
+    // Machine guardrail: this Mac has taken itself down with runaway vitest workers. These are
+    // root-only options — vitest builds ONE pool per run from the root config (createForksPool
+    // reads `vitest.config.poolOptions.forks`), so the same settings nested inside a project are
+    // silently ignored. At the root they also cap the browser project, which has no pool of its
+    // own and would otherwise open one Chromium context per story file.
+    maxWorkers: 2,
+    minWorkers: 1,
+    poolOptions: { forks: { minForks: 1, maxForks: 2 } },
     projects: [
       {
         plugins: [react()],
@@ -411,9 +419,7 @@ export default defineConfig({
           include: ['test/**/*.test.{ts,tsx}'],
           environment: 'jsdom',
           setupFiles: ['test/setup.ts'],
-          // Machine guardrail: this Mac has taken itself down with runaway vitest workers.
           pool: 'forks',
-          poolOptions: { forks: { minForks: 1, maxForks: 2 } },
         },
       },
       {
@@ -435,6 +441,8 @@ export default defineConfig({
 ```
 
 No `passWithNoTests` anywhere — see the amendment note above.
+
+Amended again 2026-09-09 (third amendment), after the review measured that the guardrail this plan had moved off the command line was not actually in force. `apps/web/package.json` used to run `vitest --pool=forks --poolOptions.forks.minForks=1 --poolOptions.forks.maxForks=2`, which applied globally; nesting the same options inside the `unit` project looks equivalent and typechecks, and the resolved project config even echoes the values back — but the pool is built once per run from the ROOT config. Measured with vitest's Node API on this machine: root `poolOptions` resolved to `{"threads":{},"forks":{}}` and root `maxWorkers`/`minWorkers` to `undefined`, so `maxThreads` fell through to `numCpus - 1` = 10 forks. Confirmed in the source: `createForksPool` reads `vitest.config.poolOptions?.forks`, never the project's. `maxWorkers`, `minWorkers` and `fileParallelism` are all `NonProjectOptions`, exactly like `passWithNoTests`. The guardrail therefore lives at the root, where it also covers the browser project.
 
 - [ ] **Step 3: Simplify the test script**
 
@@ -458,6 +466,20 @@ Expected: exit 0, the same jsdom tests.
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook --passWithNoTests`
 Expected: exit 0 with `No test files found`. Without the flag this exits 1, which is correct behaviour and not a defect.
+
+Then prove the guardrail is actually in force rather than merely present in the file — this is the check whose absence let it go inert. Drive vitest's Node API and print the RESOLVED ROOT config:
+
+```
+node --input-type=module -e "
+import { createVitest } from 'vitest/node'
+const v = await createVitest('test', { watch: false })
+console.log('root maxWorkers', v.config.maxWorkers, 'minWorkers', v.config.minWorkers)
+console.log('root poolOptions', JSON.stringify(v.config.poolOptions))
+await v.close()
+"
+```
+
+Expected: `maxWorkers 2`, `minWorkers 1`, and root `poolOptions` carrying `forks: {minForks:1,maxForks:2}` — not the empty `{"threads":{},"forks":{}}` that proved the bug.
 
 - [ ] **Step 5: Prove the browser chain before handing it to Tasks 9–10**
 
@@ -620,6 +642,10 @@ const preview: Preview = {
   parameters: {
     controls: { expanded: true },
     backgrounds: { disable: true },
+    // The a11y addon ships `test: 'todo'`, which reports violations in the panel but never fails
+    // a run. Wiring the addon into the vitest project is only half the job; this is the half that
+    // makes an axe violation a red test.
+    a11y: { test: 'error' },
   },
   globalTypes: {
     locale: {
@@ -1400,6 +1426,11 @@ If `storybook/test` does not resolve, try `@storybook/test`; report which one th
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook`
 Expected: PASS — every story renders, and the three `play` functions assert. The `StatusPill` assertion proves the i18n decorator is wired (default locale `pt`).
+
+Two things to know before reading a failure here:
+
+- Accessibility is gating from Task 5 on (`a11y: { test: 'error' }` in `preview.tsx`), so an axe violation in a primitive is a red test. That is intended: fix the component, do not weaken the gate. If a rule genuinely cannot apply to an isolated primitive, disable that ONE rule at story level with a comment saying why, and report it.
+- If the FIRST storybook run fails with Vite's `unexpectedly reloaded a test` error, it is a stale optimizer cache, not your code: a cache warmed before the a11y annotations were composed. Re-run, or clear `apps/web/node_modules/.cache/storybook/`. CI is unaffected — `npm ci` wipes `node_modules`, so its cache is always cold.
 
 - [ ] **Step 4: Verify the boundary test still passes**
 
