@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { productInputSchema } from '@shop/shared'
+import { productInputSchema, productUpdateSchema } from '@shop/shared'
 import { Router } from 'express'
 import multer from 'multer'
+import { z } from 'zod'
 import { AppError } from '../../errors.js'
 import { toWebp } from '../../lib/images.js'
 import { deleteObject, putObject } from '../../lib/r2.js'
@@ -9,6 +10,8 @@ import { Product, toPublicProduct } from '../../models/product.js'
 import { adminGuard } from '../../middleware/auth.js'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } })
+
+const altSchema = z.object({ altPt: z.string().max(200).optional(), altEn: z.string().max(200).optional() })
 
 export const adminProductsRouter = Router()
 adminProductsRouter.use('/api/admin/products', adminGuard)
@@ -36,9 +39,24 @@ adminProductsRouter.post('/api/admin/products', async (req, res) => {
 })
 
 adminProductsRouter.put('/api/admin/products/:id', async (req, res) => {
-  const input = productInputSchema.parse(req.body)
+  const { photos, ...input } = productUpdateSchema.parse(req.body)
   const doc = await findProduct(req.params.id)
   doc.set(input)
+  if (photos) {
+    // Reorder + alt edit only. Adding goes through POST /photos, removing through DELETE /photos,
+    // so the list must be a permutation of what exists — anything else would orphan R2 objects.
+    const existing = new Map(doc.photos.map((p) => [p.r2Key, p]))
+    const keys = photos.map((p) => p.key)
+    const matches = keys.length === existing.size && new Set(keys).size === keys.length && keys.every((k) => existing.has(k))
+    if (!matches) throw new AppError(400, 'VALIDATION', 'photos must list every existing photo exactly once', { photos: ['must_match_existing'] })
+    doc.set(
+      'photos',
+      photos.map((p) => ({
+        r2Key: p.key,
+        alt: p.alt ?? { pt: existing.get(p.key)!.alt?.pt ?? '', en: existing.get(p.key)!.alt?.en ?? '' },
+      })),
+    )
+  }
   try {
     await doc.save()
   } catch (err) {
@@ -61,10 +79,12 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
   // generic ParamsDictionary overload (id: string | string[]) instead of inferring the
   // precise route param type from the literal path.
   const doc = await findProduct(req.params.id as string)
+  const { altPt, altEn } = altSchema.parse(req.body ?? {})
   const webp = await toWebp(req.file.buffer)
   const key = `products/${doc._id}/${randomUUID()}.webp`
   await putObject(key, webp)
-  doc.photos.push({ r2Key: key })
+  const alt = { pt: altPt ?? '', en: altEn ?? '' }
+  doc.photos.push({ r2Key: key, alt })
   await doc.save()
   res.status(201).json({ product: toPublicProduct(doc) })
 })
@@ -72,6 +92,7 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
 adminProductsRouter.delete('/api/admin/products/:id/photos', async (req, res) => {
   const key = String(req.query.key ?? '')
   const doc = await findProduct(req.params.id)
+  if (!doc.photos.some((p) => p.r2Key === key)) throw new AppError(404, 'PHOTO_NOT_FOUND', 'Photo not found on this product')
   await deleteObject(key)
   doc.photos = doc.photos.filter((p) => p.r2Key !== key) as typeof doc.photos
   await doc.save()

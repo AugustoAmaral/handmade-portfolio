@@ -11,9 +11,11 @@ beforeEach(async () => {
       slug: 'handwritten-letter',
       name: { pt: 'Carta escrita à mão', en: 'Handwritten letter' },
       description: { pt: 'x', en: 'x' },
+      subtitle: { pt: 'Papel algodão', en: 'Cotton paper' },
       priceCents: 5000,
       type: 'physical',
       stock: null,
+      featured: true,
       active: true,
     },
     {
@@ -47,5 +49,12 @@ describe('public catalog', () => {
       expect(res.status).toBe(404)
       expect(res.body.error.code).toBe('PRODUCT_NOT_FOUND')
     }
+  })
+  it('exposes subtitle, specs, featured and photo keys in the public payload', async () => {
+    const res = await request(app()).get('/api/products/handwritten-letter')
+    expect(res.body.product.subtitle).toEqual({ pt: 'Papel algodão', en: 'Cotton paper' })
+    expect(res.body.product.specs).toEqual([])
+    expect(res.body.product.featured).toBe(true)
+    expect(res.body.product.photos).toEqual([])
   })
 })
