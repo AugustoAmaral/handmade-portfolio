@@ -14,6 +14,7 @@
 
 - Branch `feat/v2-web-foundation` is created from `docs/v2-design` and its PR targets `docs/v2-design`.
 - **The v1 app keeps working.** `apps/web/src/{App.tsx,main.tsx,components,i18n,lib,pages}` and `apps/web/test/*` are not deleted or rewritten in this PR. Only two v1 files may be edited, additively: `apps/web/src/index.css` (tokens appended) and `apps/web/index.html` (font links added). `apps/web/test/setup.ts` gains the Node 26 storage fix (Task 3). Everything else new goes in new files.
+- **Deviation from the spec, deliberate:** the spec at line 233 says controlled inputs use Storybook's `useArgs` "so typing re-renders". They do not, under the vitest browser project: there is no manager to service `updateArgs`. Stories hold the value in `useState` inside `render` instead. The spec is amended to match.
 - **Deviation from the spec, deliberate:** the spec's PR 2 wipes `apps/web/src`. Doing that here would leave the stack without a compilable app between PR 2 and PR 3 and break `npm run build` and the e2e suite on this branch. The wipe moves to PR 3, which brings the pages that replace the v1 ones. The spec's `src/i18n/` for the new instance becomes `src/copy/` to avoid colliding with the v1 `src/i18n/`; `src/copy/` is the permanent home.
 - `src/ui/**` is pure: it may import React, `react-i18next`, `@shop/shared`, and other `src/ui` files. It may NOT import `react-router`, `@tanstack/react-query`, anything from `src/app`, `src/lib`, `src/pages`, `src/components`, or touch `window`, `document`, `localStorage`, `sessionStorage`, or `fetch`. Task 8's test enforces this.
 - i18n keys ARE the English sentence: `t('Add to bag')`. Only `pt.json` is maintained. `keySeparator: false`, `nsSeparator: false`, `fallbackLng: false`, `returnNull: false`.
@@ -1892,9 +1893,15 @@ sentences rather than one interpolated key, which is the point of using English 
 The visible affordance stays the two-letter code.
 
 **Do not use `useArgs` from `storybook/preview-api` for controlled-input stories.** Under the vitest
-browser project `updateArgs` does not re-render, so a story that types into an input and then
-asserts the input's value passes without the component ever updating — the assertion is true by
-construction. Hold the value in `useState` inside the story's `render` instead.
+browser project there is no manager to service `updateArgs`, so the value never changes. Hold the
+value in `useState` inside the story's `render` instead.
+
+Be precise about the symptom, because the first description of this in the plan was backwards and
+would have sent a PR 3 author hunting for the wrong thing. A `useArgs` story that types and then
+asserts the NEW value fails LOUDLY — `expect(element).toHaveValue('marina@example.com')` against an
+empty input — so it is a permanently red test, not a silently green one. The vacuous shape is the
+other one: a story that types and then asserts the value still equals the initial arg, which passes
+because nothing ever happened. Both are wrong; only the second is invisible.
 
 **Files:**
 - Create: `apps/web/src/ui/primitives/PillButton.tsx`, `FieldLabel.tsx`, `TextInput.tsx`, `TextArea.tsx`, `Select.tsx`, `Stepper.tsx`, `ImageFrame.tsx`, `LangToggle.tsx`, plus a `*.stories.tsx` beside each
@@ -2289,7 +2296,7 @@ export const Default: Story = {
 export const Disabled: Story = { args: { disabled: true } }
 ```
 
-Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useState` inside `render` — see the amendment note: `useArgs` does not re-render under the vitest browser project, so the assertion would be true by construction):
+Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useState` inside `render` — see the amendment note: `useArgs` never updates under the vitest browser project, so a typing story built on it can only ever be red):
 
 ```tsx
 import { type ComponentProps, useState } from 'react'

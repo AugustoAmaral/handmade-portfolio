@@ -230,7 +230,7 @@ Stories cover every `ui/` component with its states, and every page with fixture
 
 ### Interaction tests (`play`)
 
-Callbacks are `fn()` spies from `storybook/test`; controlled inputs use Storybook's `useArgs` so typing re-renders. Cases: CartDrawer (inc/dec/close fire with the right slug), Stepper, LangToggle, CheckoutPage (BR country → PAC and SEDEX listed; other country → International only; empty submit → field errors; digital-only cart hides address/shipping), ProductsTable (toggle active), PhotosEditor (remove, alt change), SpecsEditor (add/remove row), OrdersList (row is an anchor to `?order=`). These run under `npm test` as the `storybook` project of the vitest workspace (browser mode, Chromium), next to the `unit` project (jsdom).
+Callbacks are `fn()` spies from `storybook/test`; controlled inputs hold their value in `useState` inside the story's `render` (amended 2026-09-09: `useArgs` was specified here, but under the vitest browser project there is no manager to service `updateArgs`, so the value never changes and a typing story built on it can only ever be red). Cases: CartDrawer (inc/dec/close fire with the right slug), Stepper, LangToggle, CheckoutPage (BR country → PAC and SEDEX listed; other country → International only; empty submit → field errors; digital-only cart hides address/shipping), ProductsTable (toggle active), PhotosEditor (remove, alt change), SpecsEditor (add/remove row), OrdersList (row is an anchor to `?order=`). These run under `npm test` as the `storybook` project of the vitest workspace (browser mode, Chromium), next to the `unit` project (jsdom).
 
 ### Unit and integration
 
