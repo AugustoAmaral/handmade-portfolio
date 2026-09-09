@@ -19,7 +19,8 @@ One finding from the extraction reshapes those tasks: **the prototype contains z
 - Branch `feat/v2-web-storefront` is created from `docs/v2-design`; its PR targets `docs/v2-design`.
 - **The wipe is narrow and happens once, in Task 12.** Delete exactly `src/main.tsx`, `src/App.tsx`, `src/components/`, `src/i18n/`, `src/lib/`, `src/pages/`, and the six v1 test files (`admin-login.test.tsx`, `api.test.ts`, `cart-page.test.tsx`, `cart.test.tsx`, `i18n.test.ts`, `storefront.test.tsx`, `thanks.test.tsx`). KEEP `src/ui/`, `src/copy/`, `src/fixtures/`, the tokens in `src/index.css`, and `test/{setup,storage,copy,fixtures,routes,ui-boundaries}.ts`. The spec's original "the existing `apps/web/src` is discarded" refers to the v1 APP, not the directory — taken literally it destroys PR 2's output. This is spec:14, already amended.
 - **`src/ui/**` is pure and STATELESS.** `test/ui-boundaries.test.ts` walks it recursively and fails on: any import that is not `react`, `react-dom`, `react-i18next`, `@shop/shared` or a relative path resolving inside `src/ui`; any of `useState`, `useReducer`, `useEffect`, `useLayoutEffect`, `useRef`; any of `window.`, `document.`, `localStorage`, `sessionStorage`, `fetch(`. `*.stories.tsx` files are exempt. This applies to `ui/shop/**` and `ui/pages/**` from the moment they exist — do not plan a component around local state.
-- **Only `app/` changes the language.** `useLang` persists to `localStorage['shop_lang']` and calls `i18n.changeLanguage`. `LangToggle` receives `onToggle`. UI components read the current language with `useTranslation().i18n.resolvedLanguage` to index `product.name[lang]` and to call `formatPrice(cents, lang)`.
+- **Only `app/` changes the language.** `useLang` persists to `localStorage['shop_lang']` and calls `i18n.changeLanguage`. `LangToggle` receives `onToggle`.
+- **UI components take `lang` as a PROP from the container. They must NOT read `i18n.resolvedLanguage`.** ⚠️ Amended after Task 3 measured it: `resolvedLanguage` is **`undefined` whenever the app is in English**. `src/copy/i18n.ts` ships `resources: { pt: … }` only — English keys render themselves — and i18next resolves only to a language that HAS translations. Verified directly: `lng=pt → resolvedLanguage=pt`, `lng=en → resolvedLanguage=undefined`. So `product.name[resolvedLanguage]` is `product.name[undefined]` → `undefined` → an empty name on every English page. `formatPrice` is typed `(cents, locale: 'pt' | 'en')` and `resolvedLanguage` is `string | undefined`, so TypeScript rejects it — and the natural way to silence that (`as 'pt' | 'en'`) is exactly what turns a compile error into a silent runtime blank. Inside `app/`, where the current language is genuinely needed from the instance, use `i18n.language`, which is always the language actually set. The `*Props` interfaces in this plan already take `lang: 'pt' | 'en'`; that was right and this constraint was wrong.
 - **i18n keys ARE the English sentence:** `t('Add to bag')`. Only `pt.json` is maintained; in English the key renders itself. `test/copy.test.ts` scans `t('literal')` call sites in `src/ui` and fails on any key missing from `pt.json`, so **every task that adds a `t()` call also adds its `pt.json` entry in the same commit.** Six keys were planted in PR 2 for this PR and must be used, not re-added: `Add to bag`, `Your bag is empty.`, `Ship to: Brazil`, `{{count}} in stock`, `Made to order`, `Sold out`. `Photo of {{name}}` is dead by design (ImageFrame takes `alt` as a prop) — delete it in Task 12 or use it, do not leave it unexamined.
 - **Navigation is `<a href>` built from `ui/routes.ts`.** No UI component imports the router. `LinkInterceptor` at the app root upgrades same-origin clicks. Callbacks only where something happens before or instead of navigating (`onAddToCart`, `onInc`, `onSubmit`).
 - **Prices are integer BRL cents** and always formatted through `formatPrice(cents, lang)`. Client-side totals are display-only; the API re-prices from Mongo.
@@ -255,7 +256,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 - [ ] **Step 4: Run it and watch it pass**
 
 Run: same command.
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests / 13 assertions.
 
 - [ ] **Step 5: Prove the assertions can fail**
 
@@ -544,57 +545,109 @@ This is the ONLY place the language changes. It reads `localStorage['shop_lang']
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-// apps/web/test/app/use-lang.test.tsx
 import { act, renderHook } from '@testing-library/react'
-import { I18nextProvider } from 'react-i18next'
 import { type ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { copyI18n } from '../../src/copy/i18n'
+import { I18nextProvider } from 'react-i18next'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useLang } from '../../src/app/state/useLang'
+import { copyI18n, createCopyInstance } from '../../src/copy/i18n'
 
-const wrapper = ({ children }: { children: ReactNode }) => (
-  <I18nextProvider i18n={copyI18n}>{children}</I18nextProvider>
-)
+// `copyI18n` is deliberately not react-i18next's global default, so a bare `useTranslation()`
+// only reaches it through a provider. Without this wrapper the hook gets react-i18next's fallback
+// object, whose `changeLanguage` is undefined.
+const wrapper = ({ children }: { children: ReactNode }) => <I18nextProvider i18n={copyI18n}>{children}</I18nextProvider>
+
+// jsdom reports `navigator.language` as 'en-US', so a test that leaves it alone starts the hook in
+// English and every toggle assertion reads backwards. Each test states the browser it assumes.
+function browserLanguage(value: string) {
+  vi.spyOn(navigator, 'language', 'get').mockReturnValue(value)
+}
 
 beforeEach(async () => {
   localStorage.clear()
+  // The instance is a module singleton shared by every test in this file: without the reset a test
+  // inherits whatever language the previous one left behind.
   await copyI18n.changeLanguage('pt')
 })
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('useLang', () => {
   it('defaults to pt when nothing is stored and the browser says pt-BR', () => {
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('pt-BR')
+    browserLanguage('pt-BR')
     const { result } = renderHook(() => useLang(), { wrapper })
     expect(result.current.lang).toBe('pt')
   })
 
   it('uses en when the browser is English and nothing is stored', () => {
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-GB')
+    browserLanguage('en-GB')
     const { result } = renderHook(() => useLang(), { wrapper })
     expect(result.current.lang).toBe('en')
   })
 
   it('prefers the stored language over the browser', () => {
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-GB')
+    browserLanguage('en-GB')
     localStorage.setItem('shop_lang', 'pt')
     const { result } = renderHook(() => useLang(), { wrapper })
     expect(result.current.lang).toBe('pt')
   })
 
   it('ignores a stored value that is not a supported language', () => {
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('pt-BR')
+    // The browser says English on purpose. With 'pt-BR' here the expected value would be the one
+    // the fallback produces anyway, and the test could not tell a rejected 'klingon' from an
+    // `initialLang` that never reads storage at all — that case is the test above, and the two
+    // guards have to be separable or neither is proved.
+    browserLanguage('en-GB')
     localStorage.setItem('shop_lang', 'klingon')
     const { result } = renderHook(() => useLang(), { wrapper })
-    expect(result.current.lang).toBe('pt')
+    expect(result.current.lang).toBe('en')
   })
 
   it('toggles, persists, and actually changes the i18n instance', async () => {
+    browserLanguage('pt-BR')
     const { result } = renderHook(() => useLang(), { wrapper })
+
     await act(async () => result.current.toggle())
+
     expect(result.current.lang).toBe('en')
     expect(localStorage.getItem('shop_lang')).toBe('en')
-    // The one that matters: without this the toggle updates a label and translates nothing.
-    expect(copyI18n.resolvedLanguage).toBe('en')
+    // The two that matter: without the `changeLanguage` call the toggle flips a label and
+    // translates nothing. They are not the same claim — an instance switched to a language it
+    // does not ship renders English copy by falling back to the key, which passes the first and
+    // fails the second — and the copy one comes first so that a mutation reddens it rather than
+    // stopping the test one line earlier. `language`, not `resolvedLanguage`: see the hook.
+    expect(copyI18n.t('Add to bag')).toBe('Add to bag')
+    expect(copyI18n.language).toBe('en')
+  })
+
+  it('toggles back, so it is a flip and not a set', async () => {
+    browserLanguage('pt-BR')
+    const { result } = renderHook(() => useLang(), { wrapper })
+
+    await act(async () => result.current.toggle())
+    await act(async () => result.current.toggle())
+
+    expect(result.current.lang).toBe('pt')
+    expect(localStorage.getItem('shop_lang')).toBe('pt')
+    // A one-way sync is a real failure shape: the user switches back and keeps reading English.
+    expect(copyI18n.t('Add to bag')).toBe('Colocar na sacola')
+  })
+
+  it('drives the provided instance, not the imported singleton', async () => {
+    browserLanguage('pt-BR')
+    // Asserting on the same singleton the wrapper provides cannot distinguish a context read from
+    // a hard-coded `import { copyI18n }`; a second instance can. Storybook already provides one
+    // instance per locale, so this is the shape the hook will actually meet.
+    const provided = createCopyInstance('pt')
+    void provided.init()
+    const { result } = renderHook(() => useLang(), {
+      wrapper: ({ children }: { children: ReactNode }) => <I18nextProvider i18n={provided}>{children}</I18nextProvider>,
+    })
+
+    await act(async () => result.current.toggle())
+
+    expect(provided.language).toBe('en')
+    expect(copyI18n.language).toBe('pt')
   })
 })
 ```
@@ -607,12 +660,11 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```ts
-// apps/web/src/app/state/useLang.ts
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { LANGS, type Lang } from '../../copy/i18n'
 
-export const LANGS = ['pt', 'en'] as const
-export type Lang = (typeof LANGS)[number]
+export type { Lang }
 
 const STORAGE_KEY = 'shop_lang'
 
@@ -620,19 +672,32 @@ function isLang(value: unknown): value is Lang {
   return typeof value === 'string' && (LANGS as readonly string[]).includes(value)
 }
 
+// Two independent decisions, not one: whether a stored preference exists AND is a language we
+// ship, and what to pick when it does not. `shop_lang` is user-editable and survives deploys, so
+// an unsupported value degrades to the browser's choice rather than reaching i18next as a
+// language with no resources.
 function initialLang(): Lang {
   const stored = localStorage.getItem(STORAGE_KEY)
   if (isLang(stored)) return stored
   return navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en'
 }
 
+/**
+ * The only place the language changes. The instance comes from the provider rather than an
+ * import, because `src/copy/i18n.ts` deliberately keeps itself out of react-i18next's global
+ * default — the hook drives whichever instance its tree was given.
+ */
 export function useLang(): { lang: Lang; toggle(): void } {
   const { i18n } = useTranslation()
   const [lang, setLang] = useState<Lang>(initialLang)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, lang)
-    if (i18n.resolvedLanguage !== lang) void i18n.changeLanguage(lang)
+    // `language`, not `resolvedLanguage`: only pt has a resource bundle (English keys render
+    // themselves), and i18next only resolves to a language that HAS translations, so
+    // `resolvedLanguage` is undefined while the app is in English. Guarding on it would compare
+    // undefined to 'en' and re-issue the call on every run.
+    if (i18n.language !== lang) void i18n.changeLanguage(lang)
   }, [lang, i18n])
 
   const toggle = useCallback(() => setLang((prev) => (prev === 'pt' ? 'en' : 'pt')), [])
@@ -643,7 +708,7 @@ export function useLang(): { lang: Lang; toggle(): void } {
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests / 13 assertions.
 
 - [ ] **Step 5: Prove the assertions can fail**
 
