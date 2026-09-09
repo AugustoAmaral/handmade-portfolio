@@ -636,9 +636,9 @@ Create `apps/web/src/copy/pt.json`:
   "Made to order": "Sob encomenda",
   "Sold out": "Esgotado",
   "Photo of {{name}}": "Foto de {{name}}",
+  "No photo yet": "Ainda sem foto",
   "Switch to English": "Mudar para inglês",
-  "Switch to Portuguese": "Mudar para português",
-  "No photo yet": "Ainda sem foto"
+  "Switch to Portuguese": "Mudar para português"
 }
 ```
 
@@ -1938,10 +1938,16 @@ const VARIANT = {
 /**
  * Links are real anchors so the browser's own affordances (middle-click, open in new tab,
  * copy link) keep working; the app root upgrades same-origin clicks to client-side routing.
+ *
+ * The `disabled` guard comes BEFORE the `href` check, and that order is the whole point. A
+ * disabled anchor is not a thing: `pointer-events-none` stops the mouse and nothing else, so Tab
+ * still reaches it and Enter still navigates. Dropping to a real `<button disabled>` is what makes
+ * it unreachable and unactivatable, and it announces itself as disabled with no custom ARIA to get
+ * wrong. A control that cannot be activated must not claim to be a link.
  */
 export function PillButton({ children, href, onClick, type = 'button', variant = 'solid', disabled, className = '' }: Props) {
   const classes = `${BASE} ${VARIANT[variant]} ${disabled ? 'pointer-events-none opacity-50' : ''} ${className}`
-  if (href) {
+  if (href && !disabled) {
     return (
       <a href={href} className={classes} onClick={onClick}>
         {children}
@@ -1961,12 +1967,18 @@ Create `apps/web/src/ui/primitives/FieldLabel.tsx`:
 ```tsx
 import type { ReactNode } from 'react'
 
+/**
+ * The hint's opacity MULTIPLIES with the label's: at `opacity-70` inside `opacity-75` the ink
+ * lands at an effective 0.525 over paper, which is 3.54:1 — below AA for 10px text. `opacity-85`
+ * (0.6375 effective, 5.05:1) is the smallest step that clears it; `opacity-80` still fails at
+ * 4.47:1. Any future change to the label's own opacity has to be re-checked against this.
+ */
 export function FieldLabel({ htmlFor, children, hint }: { htmlFor: string; children: ReactNode; hint?: string }) {
   return (
     <label htmlFor={htmlFor} className="font-mono flex flex-col gap-2 text-[10px] uppercase tracking-[0.16em] opacity-75">
       <span>
         {children}
-        {hint && <span className="ml-2 normal-case tracking-normal opacity-70">{hint}</span>}
+        {hint && <span className="ml-2 normal-case tracking-normal opacity-85">{hint}</span>}
       </span>
     </label>
   )
@@ -1976,6 +1988,9 @@ export function FieldLabel({ htmlFor, children, hint }: { htmlFor: string; child
 Create `apps/web/src/ui/primitives/TextInput.tsx`:
 
 ```tsx
+// `aria-errormessage` alone is not enough: axe's aria-valid-attr-value requires the referenced
+// message to ALSO use an announcement technique, so `aria-describedby` points at the same node.
+// Without it the error is painted but never spoken.
 interface Props {
   id: string
   value: string
@@ -2000,6 +2015,7 @@ export function TextInput({ id, value, onChange, type = 'text', placeholder, err
         disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
         className={`${FIELD} ${error ? 'border-accent' : ''}`}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -2025,6 +2041,12 @@ interface Props {
   error?: string
 }
 
+/**
+ * The error wiring mirrors TextInput deliberately. A message that is only painted red is invisible
+ * to a screen reader: `aria-errormessage` names it, `aria-describedby` is the technique that gets
+ * it announced (axe's aria-valid-attr-value rejects the former without the latter), and the `<p>`
+ * carries the id both point at.
+ */
 export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: Props) {
   return (
     <>
@@ -2034,10 +2056,16 @@ export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: 
         value={value}
         placeholder={placeholder}
         aria-invalid={error ? true : undefined}
+        aria-errormessage={error ? `${id}-error` : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
         className={`font-mono border-ink w-full resize-y border bg-transparent px-3 py-3 text-[13px] leading-relaxed outline-none focus:border-accent ${error ? 'border-accent' : ''}`}
         onChange={(e) => onChange(e.target.value)}
       />
-      {error && <p className="font-mono text-accent mt-1 text-[11px]">{error}</p>}
+      {error && (
+        <p id={`${id}-error`} className="font-mono text-accent mt-1 text-[11px]">
+          {error}
+        </p>
+      )}
     </>
   )
 }
@@ -2123,7 +2151,11 @@ interface Props {
   placeholder?: string
 }
 
-/** Product photography slot: keeps the prototype's aspect ratios and degrades to paper. */
+/**
+ * Product photography slot: keeps the prototype's aspect ratios and degrades to paper.
+ * The placeholder sits at `opacity-65` (5.13:1 on paper-2), not the lighter grey the eye wants
+ * here — it is real text on a real background, so it is held to AA like any other copy.
+ */
 export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
   const { t } = useTranslation()
   return (
@@ -2131,7 +2163,7 @@ export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
       {src ? (
         <img src={src} alt={alt} className="h-full w-full object-cover" />
       ) : (
-        <div className="font-mono absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] uppercase tracking-[0.14em] opacity-40">
+        <div className="font-mono absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] uppercase tracking-[0.14em] opacity-65">
           {placeholder ?? t('No photo yet')}
         </div>
       )}
@@ -2143,13 +2175,22 @@ export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
 Create `apps/web/src/ui/primitives/LangToggle.tsx`:
 
 ```tsx
+import { useTranslation } from 'react-i18next'
+
+/**
+ * Two whole sentences as keys rather than one interpolated `Switch to {{lang}}`: the language
+ * name has to decline with the sentence around it, and an interpolated key would have shipped
+ * "Mudar para English". The visible affordance stays the bare two-letter code — it is the target
+ * language, not a word to translate — so only the accessible name is language-aware.
+ */
 export function LangToggle({ lang, onToggle }: { lang: 'pt' | 'en'; onToggle: () => void }) {
+  const { t } = useTranslation()
   const next = lang === 'pt' ? 'en' : 'pt'
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-label={`Switch to ${next.toUpperCase()}`}
+      aria-label={next === 'en' ? t('Switch to English') : t('Switch to Portuguese')}
       className="font-mono text-[12px] uppercase tracking-[0.1em] underline underline-offset-4"
     >
       {next}
@@ -2196,6 +2237,29 @@ export const Disabled: Story = {
     await expect(canvas.getByRole('button', { name: 'Esgotado' })).toBeDisabled()
   },
 }
+
+// The story whose absence let a real defect ship green. `href` + `disabled` was never rendered by
+// any story, so axe never saw it and no play exercised it: the first implementation kept a real
+// `<a href>` and only added `pointer-events-none`, which stops the mouse and nothing else — Tab
+// reached it and Enter navigated. Everything below is about ONE property: disabled means inert.
+export const DisabledLink: Story = {
+  args: { children: 'Esgotado', href: '/', disabled: true },
+  play: async ({ canvas, args }) => {
+    const control = canvas.getByText('Esgotado')
+
+    // Unreachable by keyboard...
+    await userEvent.tab()
+    await expect(control).not.toHaveFocus()
+
+    // ...so it cannot be activated...
+    await userEvent.keyboard('{Enter}')
+    await expect(args.onClick).not.toHaveBeenCalled()
+
+    // ...and it does not advertise itself as a link it refuses to behave like.
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(control).toBeDisabled()
+  },
+}
 ```
 
 Create `apps/web/src/ui/primitives/Stepper.stories.tsx`:
@@ -2228,18 +2292,45 @@ export const Disabled: Story = { args: { disabled: true } }
 Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useArgs` so typing works):
 
 ```tsx
+import { type ComponentProps, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useArgs } from 'storybook/preview-api'
-import { expect, userEvent } from 'storybook/test'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
 import { TextInput } from './TextInput'
+
+const LABEL = 'E-mail'
 
 const meta = {
   component: TextInput,
   title: 'Primitives/TextInput',
-  args: { id: 'email', value: '' },
-  render: function Render(args) {
-    const [{ value }, updateArgs] = useArgs()
-    return <TextInput {...args} value={value} onChange={(v) => updateArgs({ value: v })} />
+  // `onChange` is required on the component, so it MUST be declared here: `StoryObj<typeof meta>`
+  // only makes an arg optional once meta supplies a default, and without it every story owes an
+  // `onChange` it never passes.
+  args: { id: 'email', value: '', onChange: fn() },
+  // Local state, NOT `useArgs`: under the vitest storybook project there is no manager to service
+  // the UPDATE_STORY_ARGS message, so `updateArgs` never re-renders and a controlled input stays
+  // frozen at its initial value — the typing assertion below silently tested nothing.
+  //
+  // The render parameter is annotated rather than inferred because the base tsconfig sets
+  // `declaration: true`: tsc must be able to NAME this type, and `Props` is not exported (TS4023).
+  //
+  // The FieldLabel is part of the story because it is part of the contract — TextInput does not
+  // name itself, and an unlabelled field fails axe's `label` rule.
+  render: function Render(args: ComponentProps<typeof TextInput>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <TextInput
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
   },
 } satisfies Meta<typeof TextInput>
 export default meta
@@ -2258,6 +2349,16 @@ export const WithError: Story = {
   args: { value: 'nope', error: 'E-mail inválido' },
   play: async ({ canvas }) => {
     await expect(canvas.getByText('E-mail inválido')).toBeInTheDocument()
+  },
+}
+
+// The error is only useful if a screen reader reaches it. `toHaveAccessibleErrorMessage` resolves
+// aria-errormessage the way an AT would, so this fails if the id wiring or the announcement
+// technique regresses — neither of which the visual assertion above would notice.
+export const ErrorIsAnnounced: Story = {
+  args: { value: 'nope', error: 'E-mail inválido' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('E-mail inválido')
   },
 }
 ```
