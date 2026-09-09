@@ -19,6 +19,7 @@ export function lineOf(product: PublicProduct, qty: number): CartLineData {
     unitCents: product.priceCents,
     qty,
     lineCents: product.priceCents * qty,
+    type: product.type,
   }
 }
 

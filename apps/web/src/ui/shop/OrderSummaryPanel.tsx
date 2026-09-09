@@ -52,11 +52,19 @@ function TotalsRow({
  *
  * `unitCents` FINALLY HAS A READER. Task 5 put it on `CartLineData` for this line and nothing had
  * used it since; the drawer shows only the line total, and it is here that `2 × R$ 45,00` explains
- * where `R$ 90,00` came from. The prototype's meta line ends `· físico`, and that half is NOT
- * transcribed: `CartLineData` carries no `type`, adding one means editing Task 5's view model and
- * the fixture derivation built on it, and the subtitle sitting in that slot in the drawer is a
- * description of the paper, not an answer to "does this ship". Flagged for Task 10 rather than
- * smuggled in here.
+ * where `R$ 90,00` came from.
+ *
+ * THE THIRD OF THE META LINE IS THE PIECE'S TYPE, and it arrived in Task 10 rather than here:
+ * Task 9 flagged `{{qty}} × {{unit}} · {{type}}` as unrenderable because `CartLineData` had no
+ * type, and step 0a added one. It earns the field three times over — this line, the shipping
+ * sections `CheckoutPage` hides for a digital-only bag, and the shipping charge `computeTotals`
+ * zeroes for the same bag are all the same fact, and reading them off one field is what stops the
+ * page charging postage for something that arrives by e-mail.
+ *
+ * The two labels are separate literal keys chosen by a condition rather than `t(line.type)`. A key
+ * built at runtime is invisible to `copy.test.ts`, which pins the number of dynamic call sites in
+ * `src/ui` at exactly one — the same reason `ProductCard`'s availability ladder and this file's
+ * error table are both spelled out.
  *
  * AN EMPTY BAG SHOWS THE MESSAGE AND NOTHING ELSE, the same call the drawer made: no totals,
  * because "Total R$ 0,00" is arithmetic about nothing, and no button, because the thing it starts
@@ -98,7 +106,8 @@ export function OrderSummaryPanel({
                 <div className="min-w-0">
                   <span className="font-display block text-[19px] leading-[1.15]">{line.name}</span>
                   <span className="font-mono mt-[5px] block text-[11px] tracking-[0.04em] opacity-65">
-                    {line.qty} × {formatPrice(line.unitCents, lang)}
+                    {line.qty} × {formatPrice(line.unitCents, lang)} ·{' '}
+                    {line.type === 'digital' ? t('digital') : t('physical')}
                   </span>
                 </div>
                 <Price cents={line.lineCents} lang={lang} className="text-[13px]" />

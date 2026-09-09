@@ -2,7 +2,7 @@ import { SHIPPING_METHODS, computeTotals, formatPrice } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent } from 'storybook/test'
 import { cartLines } from '../../fixtures/checkout'
-import { drawing, letter } from '../../fixtures/products'
+import { digitalLetter, drawing, letter } from '../../fixtures/products'
 import { lineOf } from './CartLine.stories'
 import { OrderSummaryPanel } from './OrderSummaryPanel'
 
@@ -66,9 +66,9 @@ export const Default: Story = {
     // implementation printing `lineCents` in the meta row is indistinguishable there. Found by
     // mutation — the first version of this story asserted line 1 and stayed green through it.
     const items = canvas.getAllByRole('listitem')
-    await expect(metaOf(items[1]!)).toBe(`${LINES[1]!.qty} × ${formatPrice(drawing.priceCents, 'pt')}`)
+    await expect(metaOf(items[1]!)).toBe(`${LINES[1]!.qty} × ${formatPrice(drawing.priceCents, 'pt')} · físico`)
     await expect(items[1]!.lastElementChild?.textContent).toBe(formatPrice(LINES[1]!.lineCents, 'pt'))
-    await expect(metaOf(items[0]!)).toBe(`${LINES[0]!.qty} × ${formatPrice(letter.priceCents, 'pt')}`)
+    await expect(metaOf(items[0]!)).toBe(`${LINES[0]!.qty} × ${formatPrice(letter.priceCents, 'pt')} · físico`)
 
     const button = canvas.getByRole('button', { name: /pagar/i })
     await expect(button.textContent).toBe(`Pagar ${formatPrice(TOTALS.totalCents, 'pt')}`)
@@ -143,6 +143,25 @@ export const Empty: Story = {
     canvas.getByText('A sacola está vazia.')
     await expect(canvas.queryByRole('button')).toBeNull()
     await expect(canvas.queryByText('Total')).toBeNull()
+  },
+}
+
+// The other side of the type branch, and the reason the field exists rather than a hardcoded
+// `físico`: both fixtures above are physical, so a summary that printed the word unconditionally
+// would pass `Default` and every other story in this file. `digitalLetter` is the catalogue's own
+// digital piece, so this is a bag the shop really sells rather than a contrived line.
+export const DigitalLineIsLabelled: Story = {
+  args: {
+    lines: [lineOf(digitalLetter, 1)],
+    itemsCents: digitalLetter.priceCents,
+    shippingCents: null,
+    totalCents: digitalLetter.priceCents,
+    shippingMethodName: null,
+  },
+  play: async ({ canvas }) => {
+    await expect(metaOf(canvas.getByRole('listitem'))).toBe(
+      `1 × ${formatPrice(digitalLetter.priceCents, 'pt')} · digital`,
+    )
   },
 }
 

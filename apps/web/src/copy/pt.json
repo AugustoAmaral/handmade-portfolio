@@ -111,5 +111,14 @@
   "Choose a shipping option": "Escolha uma opção de envio",
   "Pay {{total}}": "Pagar {{total}}",
   "Sending you to Stripe": "Redirecionando para o Stripe",
-  "By continuing you accept that I start making the piece. The production time counts from the payment confirmation.": "Ao continuar você aceita que eu comece a produzir a peça. Prazo de produção conta a partir da confirmação do pagamento."
+  "By continuing you accept that I start making the piece. The production time counts from the payment confirmation.": "Ao continuar você aceita que eu comece a produzir a peça. Prazo de produção conta a partir da confirmação do pagamento.",
+  "physical": "físico",
+  "digital": "digital",
+  "Catalogue": "Catálogo",
+  "Back to the bag": "Voltar para a sacola",
+  "Secure payment via Stripe": "Pagamento seguro via Stripe",
+  "A shop of four pieces,": "Uma loja de quatro peças,",
+  "written by hand": "escrita à mão",
+  "in both senses.": "nos dois sentidos.",
+  "I am Augusto. A developer by day, and in my spare time someone who writes letters, draws in India ink and embroiders bookmarks. This shop exists because I wanted to build a shop — and it felt more honest to sell things I actually make.": "Sou Augusto. Desenvolvedor de dia, e nas horas vagas alguém que escreve cartas, desenha a nanquim e borda marcadores de página. Esta loja existe porque eu queria construir uma loja — e achei mais honesto vender coisas que eu realmente faço."
 }

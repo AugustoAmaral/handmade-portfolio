@@ -1,4 +1,4 @@
-import { CART_MAX_QTY } from '@shop/shared'
+import { CART_MAX_QTY, type TotalsLine } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { Price, Stepper } from '../primitives'
 
@@ -10,6 +10,19 @@ export interface CartLineData {
   unitCents: number
   qty: number
   lineCents: number
+  /**
+   * Read by `OrderSummaryPanel`, not by the drawer line, exactly as `unitCents` is. The prototype's
+   * summary meta reads `{{qty}} × {{unit}} · {{type}}` and Task 9 could not render the last third
+   * because this view model had no type; it is here now (Task 10, step 0a).
+   *
+   * Typed from `TotalsLine` rather than from `PublicProduct` on purpose: the container that builds
+   * these lines already has to produce `TotalsLine`s for `computeTotals`, so this is the same fact
+   * it is holding anyway, and `CheckoutPage` can ask `hasPhysicalItems(lines)` — the function the
+   * API and the totals both use — instead of taking a boolean prop the container computes its own
+   * way. Two derivations of "does this order ship" is how the address section and the shipping
+   * charge start disagreeing.
+   */
+  type: TotalsLine['type']
 }
 
 export interface CartLineProps {

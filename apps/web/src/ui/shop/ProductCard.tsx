@@ -1,7 +1,7 @@
 import type { PublicProduct } from '@shop/shared'
-import { useTranslation } from 'react-i18next'
 import { ImageFrame, Price } from '../primitives'
 import { routes } from '../routes'
+import { useAvailabilityLabel } from './availability'
 
 export interface ProductCardProps {
   product: PublicProduct
@@ -27,24 +27,14 @@ export interface ProductCardProps {
  * AVAILABILITY IS TEXT, not a colour and not a position, and it is the one thing on this card the
  * design does not have: the prototype's cards are name, subtitle and price. Sold out is the state
  * that has to survive being read aloud, so the card states all four rather than styling the one.
- * The order of the branches is the interesting part — `stock === 0` is checked BEFORE `digital`,
- * because a digital item whose stock ran to zero is sold out and saying "delivered by e-mail" over
- * a piece nobody can buy is worse than saying nothing. `stock === null` means made to order, per
- * spec:53, and only then does a number mean a count. The digital wording is spec:221's, which
- * overrides the prototype's `download imediato`: there is no automatic download.
+ * The ladder itself moved to `availability.ts` in Task 10, when the product page turned out to
+ * print the same sentence; the order of its branches is the interesting part and the note lives
+ * with the code.
  *
  * The meta and availability lines sit at `opacity-65`, not the prototype's `.55` (3.83:1 at 11px).
  */
 export function ProductCard({ product, lang }: ProductCardProps) {
-  const { t } = useTranslation()
-  const availability =
-    product.stock === 0
-      ? t('Sold out')
-      : product.type === 'digital'
-        ? t('Delivered by e-mail')
-        : product.stock === null
-          ? t('Made to order')
-          : t('{{count}} in stock', { count: product.stock })
+  const availability = useAvailabilityLabel()
   return (
     <li className="bg-paper flex flex-col">
       <a
@@ -61,7 +51,9 @@ export function ProductCard({ product, lang }: ProductCardProps) {
           </div>
           <div className="text-right">
             <Price cents={product.priceCents} lang={lang} className="text-sm" />
-            <div className="font-mono mt-1.5 text-[11px] uppercase tracking-[0.12em] opacity-65">{availability}</div>
+            <div className="font-mono mt-1.5 text-[11px] uppercase tracking-[0.12em] opacity-65">
+              {availability(product)}
+            </div>
           </div>
         </div>
       </a>
