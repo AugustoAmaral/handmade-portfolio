@@ -636,6 +636,8 @@ Create `apps/web/src/copy/pt.json`:
   "Made to order": "Sob encomenda",
   "Sold out": "Esgotado",
   "Photo of {{name}}": "Foto de {{name}}",
+  "Switch to English": "Mudar para inglês",
+  "Switch to Portuguese": "Mudar para português",
   "No photo yet": "Ainda sem foto"
 }
 ```
@@ -1873,6 +1875,26 @@ git commit -m "feat(web): text and layout primitives with stories"
 ---
 
 ### Task 10: Interactive primitives
+
+Amended 2026-09-09 after the first implementation, on two defects it found and deliberately left
+unfixed for a decision, plus one of this plan's own patterns that tested nothing.
+
+**A disabled `PillButton` with an `href` must not be operable.** The first version styled it with
+`pointer-events-none opacity-50` and still rendered a real `<a href>`, which stops the mouse and
+nothing else: Tab still reaches it and Enter still navigates. The fix is to stop rendering a link
+at all when disabled — return the `<button disabled>` branch regardless of `href`. That gives real
+disabled semantics, announced by screen readers, with no custom ARIA to get wrong. A story must
+exercise it, because the suite was green over this defect: no story rendered a disabled link.
+
+**`LangToggle`'s accessible name must be translated.** It was hardcoded English and read as
+"Switch to EN". `pt.json` gains `"Switch to English"` and `"Switch to Portuguese"` — two whole
+sentences rather than one interpolated key, which is the point of using English sentences as keys.
+The visible affordance stays the two-letter code.
+
+**Do not use `useArgs` from `storybook/preview-api` for controlled-input stories.** Under the vitest
+browser project `updateArgs` does not re-render, so a story that types into an input and then
+asserts the input's value passes without the component ever updating — the assertion is true by
+construction. Hold the value in `useState` inside the story's `render` instead.
 
 **Files:**
 - Create: `apps/web/src/ui/primitives/PillButton.tsx`, `FieldLabel.tsx`, `TextInput.tsx`, `TextArea.tsx`, `Select.tsx`, `Stepper.tsx`, `ImageFrame.tsx`, `LangToggle.tsx`, plus a `*.stories.tsx` beside each
