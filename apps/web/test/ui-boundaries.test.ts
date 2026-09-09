@@ -4,31 +4,43 @@ import { describe, expect, it } from 'vitest'
 
 const UI_DIR = path.join(__dirname, '..', 'src', 'ui')
 
-const FORBIDDEN_IMPORTS = [
-  'react-router',
-  '@tanstack/react-query',
-  '../app',
-  '../../app',
-  '../lib',
-  '../../lib',
-  '../pages',
-  '../../pages',
-  '../components',
-  '../../components',
-  '../i18n',
-  '../../i18n',
+// The UI layer declares what it MAY import rather than what it may not. A blacklist of relative
+// prefixes only reaches as deep as the prefixes someone remembered to write: a file two levels
+// down under src/ui escapes `../lib` and `../../lib` with `../../../lib`. Resolving the path and
+// asking whether it stayed inside src/ui has no such hole.
+const ALLOWED_PACKAGES = ['react', 'react-dom', 'react-i18next', '@shop/shared']
+
+// Four ways into the module graph. A check that only sees `from '...'` leaves the other three
+// doors open — side-effect imports, dynamic imports and require all reach the same modules.
+const SPECIFIER_PATTERNS = [
+  /\bfrom\s+['"]([^'"]+)['"]/g,
+  /\bimport\s+['"]([^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ]
 
-// Browser globals: the UI layer is rendered by the app layer and by Storybook, and must not
-// reach for state that only exists in one of them.
 const FORBIDDEN_GLOBALS = [/\bwindow\./, /\bdocument\./, /\blocalStorage\b/, /\bsessionStorage\b/, /\bfetch\(/]
 
+// Stories are exempt on purpose: they import the storybook packages by necessity, and they are
+// already executed as tests by the browser project, so a broken one fails there.
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = path.join(dir, entry)
     if (statSync(full).isDirectory()) return walk(full)
     return /\.tsx?$/.test(entry) && !/\.stories\.tsx?$/.test(entry) ? [full] : []
   })
+}
+
+function specifiersOf(source: string): string[] {
+  return SPECIFIER_PATTERNS.flatMap((pattern) => [...source.matchAll(pattern)].map((m) => m[1]!))
+}
+
+function isAllowed(specifier: string, file: string): boolean {
+  if (specifier.startsWith('.')) {
+    const resolved = path.resolve(path.dirname(file), specifier)
+    return resolved === UI_DIR || resolved.startsWith(`${UI_DIR}${path.sep}`)
+  }
+  return ALLOWED_PACKAGES.some((p) => specifier === p || specifier.startsWith(`${p}/`))
 }
 
 describe('ui layer boundaries', () => {
@@ -40,12 +52,8 @@ describe('ui layer boundaries', () => {
 
   it.each(files.map((f) => [path.relative(UI_DIR, f), f]))('%s imports nothing stateful', (_name, file) => {
     const source = readFileSync(file, 'utf8')
-    const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!)
-    for (const specifier of imports) {
-      expect(
-        FORBIDDEN_IMPORTS.some((f) => specifier === f || specifier.startsWith(`${f}/`)),
-        `${specifier} is not allowed in src/ui`,
-      ).toBe(false)
+    for (const specifier of specifiersOf(source)) {
+      expect(isAllowed(specifier, file), `${specifier} is not allowed in src/ui`).toBe(true)
     }
   })
 
