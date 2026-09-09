@@ -9,7 +9,9 @@
 
 v1 shipped and is live (`shop.augustoamaral.com`, API on Render, Atlas M0, R2). It works, but the frontend is default-Tailwind grey, every page is coupled to data fetching and routing, and the buyer's address only exists after Stripe collects it on the hosted page. The approved design adds a real checkout page, a cart drawer, a richer product model, a proper admin, and a paper/ink visual identity. Augusto also wants a **functional Storybook**: the design broken into small stateless components, composed into stateless pages, so every piece from atom to full page renders in Storybook from fixtures — no network mocks — with interaction tests written as Storybook `play` functions.
 
-The existing `apps/web/src` is **discarded and rebuilt**. Nothing in it needs to be preserved. Vite, Tailwind 4, TypeScript, react-query, react-router and `@shop/shared` stay as tooling.
+The existing `apps/web/src` is **discarded and rebuilt**. Nothing in the v1 app needs to be preserved.
+
+Amended 2026-09-09, after PR 2: read that as the v1 APP, not the directory. PR 2 put the new foundation inside the same tree, so the wipe in PR 3 must delete only `src/main.tsx`, `src/App.tsx`, `src/components/`, `src/i18n/`, `src/lib/` and `src/pages/`, and must KEEP `src/ui/`, `src/copy/`, `src/fixtures/` and the tokens in `src/index.css`. Same for `apps/web/test/`: `setup.ts`, `storage.test.ts`, `copy.test.ts`, `fixtures.test.ts`, `routes.test.ts` and `ui-boundaries.test.ts` survive. Taken literally, the original sentence destroys PR 2's output. Vite, Tailwind 4, TypeScript, react-query, react-router and `@shop/shared` stay as tooling.
 
 ## Decisions (with rationale)
 
@@ -22,7 +24,7 @@ The existing `apps/web/src` is **discarded and rebuilt**. Nothing in it needs to
 7. **UI layer is pure; the app layer owns state and effects.** `src/ui/**` may not import react-router, react-query, anything from `src/app`, or touch `window`/`localStorage`. The only hook allowed in `ui/` is `useTranslation` from react-i18next. An architecture test enforces this.
 8. **i18n via react-i18next with natural-language keys.** The key *is* the English sentence (`t('Add to bag')`); only `pt.json` is maintained; a missing key renders itself. Product content stays bilingual data (`name[lang]`). Storybook gets an `I18nextProvider` decorator with a PT/EN toolbar toggle.
 9. **Navigation is `<a href>`.** UI components render real anchors built from `ui/routes.ts`. A single `LinkInterceptor` at the app root upgrades same-origin clicks to client-side `navigate()`. Callbacks are used only where something happens before or instead of navigating (`onAddToCart`, `onInc`, `onSubmit`, `onToggleActive`).
-10. **Storybook 9 + `@storybook/addon-vitest`.** Stories run as vitest tests in real Chromium (Playwright is already a dependency). `play` functions cover component and page interaction; RTL unit tests cover only the `app/` layer.
+10. **Storybook 10 + `@storybook/addon-vitest`.** (Amended 2026-09-09: written as 9, built on 10.6 — 9 was never installed, and 10.6's peer ranges were verified against the repo's vitest 3.2.7 before PR 2 started.) Stories run as vitest tests in real Chromium (Playwright is already a dependency). `play` functions cover component and page interaction; RTL unit tests cover only the `app/` layer.
 11. **Admin is unlinked.** The "Admin" nav item in the design is dropped. `/admin` exists but nothing links to it. The login screen is restyled with the design's primitives.
 12. **Kept although absent from the design:** the PT/EN toggle in the shop header, the admin login screen.
 13. **Delivery: stacked PRs, backend first.** Five branches, each based on the previous, reviewed separately, merged in order.
@@ -224,7 +226,7 @@ Tailwind 4 `@theme` in `index.css`: colors `paper #f4f0e6`, `paper-2 #efe9db`, `
 
 ### Storybook
 
-Storybook 9 (`@storybook/react-vite`) in `apps/web`; stories colocated (`Component.stories.tsx`). Addons: `@storybook/addon-vitest`, `@storybook/addon-a11y`, autodocs. Global decorators in `.storybook/preview.tsx`: `I18nextProvider` with the real instance + toolbar global `locale` (pt/en) that calls `changeLanguage`; `index.css` import; anchor guard (above). No data mocks anywhere.
+Storybook 10.6 (`@storybook/react-vite`) in `apps/web`; stories colocated (`Component.stories.tsx`). Addons: `@storybook/addon-vitest`, `@storybook/addon-a11y`. (Autodocs is specified but NOT enabled as of PR 2 — the built index carries 30 story entries and 0 docs entries. Turn it on in PR 3 or drop the requirement deliberately.) Global decorators in `.storybook/preview.tsx`: `I18nextProvider` with the real instance + toolbar global `locale` (pt/en) — amended 2026-09-09: the decorator selects a memoised, already-initialised instance per language instead of calling `changeLanguage`, because an effect-driven language switch paints the previous language for one commit and leaks it into the next story through the shared instance; `index.css` import; anchor guard (above). No data mocks anywhere.
 
 Stories cover every `ui/` component with its states, and every page with fixtures: Home (full catalog, empty), Product (gallery, no photos, sold out, digital), Checkout (empty, BR filled, international filled, validation errors, submitting, out-of-stock error), Done (pending, paid), Admin login, products table (with inactive and sold-out rows, empty), product form (new, editing), orders (with selection, empty).
 
