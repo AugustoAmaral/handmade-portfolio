@@ -14,6 +14,7 @@
 
 - Branch `feat/v2-web-foundation` is created from `docs/v2-design` and its PR targets `docs/v2-design`.
 - **The v1 app keeps working.** `apps/web/src/{App.tsx,main.tsx,components,i18n,lib,pages}` and `apps/web/test/*` are not deleted or rewritten in this PR. Only two v1 files may be edited, additively: `apps/web/src/index.css` (tokens appended) and `apps/web/index.html` (font links added). `apps/web/test/setup.ts` gains the Node 26 storage fix (Task 3). Everything else new goes in new files.
+- **Deviation from the spec, deliberate:** the spec at line 233 says controlled inputs use Storybook's `useArgs` "so typing re-renders". They do not, under the vitest browser project: there is no manager to service `updateArgs`. Stories hold the value in `useState` inside `render` instead. The spec is amended to match.
 - **Deviation from the spec, deliberate:** the spec's PR 2 wipes `apps/web/src`. Doing that here would leave the stack without a compilable app between PR 2 and PR 3 and break `npm run build` and the e2e suite on this branch. The wipe moves to PR 3, which brings the pages that replace the v1 ones. The spec's `src/i18n/` for the new instance becomes `src/copy/` to avoid colliding with the v1 `src/i18n/`; `src/copy/` is the permanent home.
 - `src/ui/**` is pure: it may import React, `react-i18next`, `@shop/shared`, and other `src/ui` files. It may NOT import `react-router`, `@tanstack/react-query`, anything from `src/app`, `src/lib`, `src/pages`, `src/components`, or touch `window`, `document`, `localStorage`, `sessionStorage`, or `fetch`. Task 8's test enforces this.
 - i18n keys ARE the English sentence: `t('Add to bag')`. Only `pt.json` is maintained. `keySeparator: false`, `nsSeparator: false`, `fallbackLng: false`, `returnNull: false`.
@@ -246,9 +247,11 @@ git commit -m "feat(web): paper and ink design tokens with the prototype's fonts
 - Test: `apps/web/test/storage.test.ts`
 
 **Interfaces:**
-- Produces: `localStorage` and `sessionStorage` inside jsdom tests are the jsdom ones, on any Node version, so `npm test -w @shop/web` needs no special flags.
+- Produces: `localStorage` and `sessionStorage` work inside jsdom tests on any Node version, so `npm test -w @shop/web` needs no special flags.
 
 Background: Node 25+ ships a global Web Storage. In a jsdom environment that global shadows `window.localStorage`, and because it is inert unless Node was started with `--localstorage-file`, `localStorage.setItem` throws `TypeError: Cannot read properties of undefined`. This machine runs Node 26; CI runs Node 22 and never saw it.
+
+Amended 2026-09-09 after the first implementation attempt disproved this section's original fix. Two things were measured inside the running vitest jsdom environment: `globalThis === window` (so the original guard `globalThis[key] !== window[key]` compared `undefined` with itself and never fired), and the single shared `localStorage` property is Node's own `internal/webstorage` accessor rather than jsdom's — vitest's jsdom environment never got to install its `Storage`, so there is nothing on the window to point the globals back at. The property is `configurable: true`, so redefining it works; only the source value was missing. The fix therefore installs a small spec-shaped `Storage` instead of copying one, and stays behind a capability guard so CI on Node 22 keeps using jsdom's real implementation.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -265,7 +268,7 @@ describe('jsdom storage', () => {
     expect(localStorage.getItem('probe')).toBeNull()
   })
 
-  it('shares one storage between globalThis and window', () => {
+  it('works when reached through window, the way the i18n detector reads it', () => {
     window.localStorage.setItem('shared', '1')
     expect(localStorage.getItem('shared')).toBe('1')
     localStorage.clear()
@@ -285,13 +288,44 @@ Replace `apps/web/test/setup.ts` with:
 ```ts
 import '@testing-library/jest-dom/vitest'
 
-// Node 25+ exposes a global Web Storage that shadows jsdom's window.localStorage, and it is
-// inert unless Node was started with --localstorage-file, so `localStorage.setItem` throws.
-// Point the globals back at jsdom's storage so the tests and the code under test share one.
+// Node 25+ exposes a global Web Storage that shadows jsdom's, and it is inert unless node was
+// started with --localstorage-file: the getter returns undefined and every `localStorage.setItem`
+// throws. Inside the vitest jsdom environment `globalThis` IS the window, and the property it
+// carries is node's accessor, so there is no jsdom Storage left to point the globals back at.
+// Install a spec-shaped one instead. On node 22 (CI) the ambient storage works and the guard
+// below leaves jsdom's own implementation alone.
+class MemoryStorage {
+  #entries = new Map<string, string>()
+
+  get length(): number {
+    return this.#entries.size
+  }
+
+  key(index: number): string | null {
+    return Array.from(this.#entries.keys())[index] ?? null
+  }
+
+  getItem(key: string): string | null {
+    return this.#entries.get(String(key)) ?? null
+  }
+
+  setItem(key: string, value: string): void {
+    this.#entries.set(String(key), String(value))
+  }
+
+  removeItem(key: string): void {
+    this.#entries.delete(String(key))
+  }
+
+  clear(): void {
+    this.#entries.clear()
+  }
+}
+
 for (const key of ['localStorage', 'sessionStorage'] as const) {
-  if (typeof window !== 'undefined' && globalThis[key] !== window[key]) {
+  if (typeof globalThis[key]?.setItem !== 'function') {
     Object.defineProperty(globalThis, key, {
-      value: window[key],
+      value: new MemoryStorage(),
       configurable: true,
       writable: true,
     })
@@ -304,11 +338,14 @@ for (const key of ['localStorage', 'sessionStorage'] as const) {
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web`
 Expected: PASS, including the v1 suite that was failing on this machine (14 v1 tests + the 2 new ones), with no extra Node flags.
 
+Run: `npm run typecheck -w @shop/web` (or the repo's typecheck script)
+Expected: clean — `MemoryStorage` deliberately does not declare `implements Storage`, because the DOM `Storage` interface carries a string index signature a class cannot satisfy.
+
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/web/test/setup.ts apps/web/test/storage.test.ts
-git commit -m "fix(web): use jsdom storage when node exposes a global web storage"
+git commit -m "fix(web): working web storage in jsdom tests on node 25 and later"
 ```
 
 ---
@@ -322,19 +359,33 @@ git commit -m "fix(web): use jsdom storage when node exposes a global web storag
 
 **Interfaces:**
 - Consumes: `.storybook/main.ts`, `.storybook/preview.tsx` (Tasks 1–2).
-- Produces: `npm test -w @shop/web` runs both projects; `npm test -w @shop/web -- --project unit` and `--project storybook` run one.
+- Produces: `npm test -w @shop/web` runs both projects; `npm test -w @shop/web -- --project unit` runs the jsdom suite alone. Until the first story lands in Task 9, `--project storybook` alone resolves to zero test files and needs `--passWithNoTests` on the command line; from Task 9 on it works bare.
+
+Amended 2026-09-09, after the first implementation measured two things this section had assumed wrong.
+
+First: vitest's "no test files" check is run-level, not per-project. The full run passes because the `unit` project supplies files, but `--project storybook` on its own exits 1 while no stories exist. `passWithNoTests` is a `NonProjectOptions` entry in vitest 3.2.7, so it cannot be scoped to the storybook project — setting it would apply to the whole run and would silently green-light a vanished unit suite. It is therefore NOT set in the config; the interim selector passes the flag on the command line instead, and the need disappears at Task 9.
+
+Second: Storybook 10.6's vitest addon injects a virtual setup module that supplies the preview annotations of every addon in `main.ts` — but it skips that injection when it finds the literal `setProjectAnnotations` in a user setup file. A setup file that calls it manually with only `./preview` therefore silences `@storybook/addon-a11y` in the test runs, which defeats the accessibility half of the Storybook strategy. The setup file below composes the addon's annotations explicitly. `@storybook/addon-vitest` exports no `/preview` entry point and contributes none, so a11y plus the project preview is the complete set.
 
 - [ ] **Step 1: Write the Storybook test setup**
 
 Create `apps/web/.storybook/vitest.setup.ts`:
 
 ```ts
+import * as a11yAnnotations from '@storybook/addon-a11y/preview'
 import { setProjectAnnotations } from '@storybook/react-vite'
 import * as previewAnnotations from './preview'
 
-// Gives every story-as-test the decorators, parameters and globals from preview.tsx.
-setProjectAnnotations([previewAnnotations])
+// Gives every story-as-test the decorators, parameters and globals from preview.tsx, plus the
+// a11y addon's own annotations. Storybook's vitest addon would inject these itself, but it skips
+// that as soon as a setup file calls setProjectAnnotations — so anything listed in main.ts that
+// ships a `/preview` entry point has to be composed here by hand. Order matters: the project's
+// own preview goes last so it wins.
+setProjectAnnotations([a11yAnnotations, previewAnnotations])
 ```
+
+Storybook prints an info box on every run saying this file is obsolete. That is the same
+injection-skip described above, and it is expected as long as the file exists.
 
 If `setProjectAnnotations` is not exported from `@storybook/react-vite` in the installed version, check `node_modules/@storybook/react-vite/dist/index.d.ts` for the right entry point and use that; report what you used.
 
@@ -346,6 +397,7 @@ Replace `apps/web/vitest.config.ts` with:
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
@@ -353,6 +405,14 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   test: {
+    // Machine guardrail: this Mac has taken itself down with runaway vitest workers. These are
+    // root-only options — vitest builds ONE pool per run from the root config (createForksPool
+    // reads `vitest.config.poolOptions.forks`), so the same settings nested inside a project are
+    // silently ignored. At the root they also cap the browser project, which has no pool of its
+    // own and would otherwise open one Chromium context per story file.
+    maxWorkers: 2,
+    minWorkers: 1,
+    poolOptions: { forks: { minForks: 1, maxForks: 2 } },
     projects: [
       {
         plugins: [react()],
@@ -361,13 +421,16 @@ export default defineConfig({
           include: ['test/**/*.test.{ts,tsx}'],
           environment: 'jsdom',
           setupFiles: ['test/setup.ts'],
-          // Machine guardrail: this Mac has taken itself down with runaway vitest workers.
           pool: 'forks',
-          poolOptions: { forks: { minForks: 1, maxForks: 2 } },
         },
       },
       {
-        plugins: [react(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
+        // Tailwind belongs here, not only in vite.config.ts: vitest does not read that file, so
+        // without this plugin `preview.tsx`'s `import '../src/index.css'` ships `@import
+        // 'tailwindcss'` unprocessed and every story renders unstyled — Times, 16px, black on
+        // white. Stories would then look right in Storybook and be TESTED as something else, and
+        // the a11y gate would silently lose every style-dependent rule, colour contrast included.
+        plugins: [react(), tailwindcss(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
         test: {
           name: 'storybook',
           browser: {
@@ -384,6 +447,20 @@ export default defineConfig({
 })
 ```
 
+No `passWithNoTests` anywhere — see the amendment note above.
+
+Amended a fourth time 2026-09-09, during Task 9, when the first stories to ever run revealed the
+browser project was rendering without Tailwind. Measured in the running browser: `color`
+`rgb(0,0,0)`, `fontSize` 16px, `fontFamily` Times, 68 CSS rules in total. `@tailwindcss/vite` was
+only ever in `vite.config.ts`, which vitest does not read. Storybook's own builder DOES read that
+file, so `build-storybook` was styled while the story TESTS were not — the two halves of "stories
+are the test suite" were looking at different pages. The a11y gate was still catching structural
+rules (`button-name` fails) but could not see contrast at all, so it was passing at 1.3:1.
+The `unit` project deliberately does NOT get the plugin: jsdom computes no styles, so it would be
+cost with no signal.
+
+Amended again 2026-09-09 (third amendment), after the review measured that the guardrail this plan had moved off the command line was not actually in force. `apps/web/package.json` used to run `vitest --pool=forks --poolOptions.forks.minForks=1 --poolOptions.forks.maxForks=2`, which applied globally; nesting the same options inside the `unit` project looks equivalent and typechecks, and the resolved project config even echoes the values back — but the pool is built once per run from the ROOT config. Measured with vitest's Node API on this machine: root `poolOptions` resolved to `{"threads":{},"forks":{}}` and root `maxWorkers`/`minWorkers` to `undefined`, so `maxThreads` fell through to `numCpus - 1` = 10 forks. Confirmed in the source: `createForksPool` reads `vitest.config.poolOptions?.forks`, never the project's. `maxWorkers`, `minWorkers` and `fileParallelism` are all `NonProjectOptions`, exactly like `passWithNoTests`. The guardrail therefore lives at the root, where it also covers the browser project.
+
 - [ ] **Step 3: Simplify the test script**
 
 In `apps/web/package.json`, replace the `test` script with:
@@ -396,13 +473,47 @@ The pool flags moved into the `unit` project above; passing them on the CLI woul
 
 - [ ] **Step 4: Verify both projects run**
 
-Run: `npx playwright install chromium` (only if not already installed on this machine).
+Chromium is already installed on this machine; run `npx playwright install chromium` only if a run reports it missing.
+
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web`
-Expected: the `unit` project runs the existing tests and passes; the `storybook` project starts a Chromium browser and reports no test files (there are no stories yet) without failing. If the storybook project errors instead of reporting zero tests, report the exact error — do not paper over it by removing the project.
+Expected: exit 0. The `unit` project runs the existing tests and passes; the `storybook` project contributes zero files and, because the run as a whole is not empty, is simply not reported. With no stories it never starts a browser.
+
+Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit`
+Expected: exit 0, the same jsdom tests.
+
+Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook --passWithNoTests`
+Expected: exit 0 with `No test files found`. Without the flag this exits 1, which is correct behaviour and not a defect.
+
+Then prove the guardrail is actually in force rather than merely present in the file — this is the check whose absence let it go inert. Drive vitest's Node API and print the RESOLVED ROOT config:
+
+```
+node --input-type=module -e "
+import { createVitest } from 'vitest/node'
+const v = await createVitest('test', { watch: false })
+console.log('root maxWorkers', v.config.maxWorkers, 'minWorkers', v.config.minWorkers)
+console.log('root poolOptions', JSON.stringify(v.config.poolOptions))
+await v.close()
+"
+```
+
+Expected: `maxWorkers 2`, `minWorkers 1`, and root `poolOptions` carrying `forks: {minForks:1,maxForks:2}` — not the empty `{"threads":{},"forks":{}}` that proved the bug.
+
+- [ ] **Step 5: Prove the browser chain before handing it to Tasks 9–10**
+
+Zero stories means none of the browser path is exercised, so verify it with a throwaway story that is created, run, and deleted — it must NOT be committed, and `git status` must be clean afterwards.
+
+Write a minimal `apps/web/src/probe.stories.tsx` rendering one element, with a `play` function that asserts something about it, then run the storybook project against it and confirm:
+
+1. real headless Chromium starts through the Playwright provider and the story runs;
+2. the `preview.tsx` decorator reaches story-tests (assert on the `bg-paper` wrapper);
+3. `@storybook/addon-a11y` actually runs — this is what the amended setup file is for, so prove it rather than assume it;
+4. which import path works for `expect`/`userEvent` (`storybook/test` vs `@storybook/test`), and report it, because Task 9 depends on the answer.
+
+Then delete the probe file and report all four results.
 
 Check orphans afterwards: `ps ax -o pid,ppid,command | grep -i vitest | grep -v grep`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/web/vitest.config.ts apps/web/package.json apps/web/.storybook/vitest.setup.ts
@@ -419,16 +530,30 @@ git commit -m "chore(web): vitest projects for jsdom units and browser stories"
 - Test: `apps/web/test/copy.test.ts`
 
 **Interfaces:**
-- Produces: `createCopyInstance()` and the default `copyI18n` export from `src/copy/i18n.ts`; a Storybook toolbar global `locale` (`en` | `pt`) that switches the instance's language.
+- Produces: `createCopyInstance()` and the default `copyI18n` export from `src/copy/i18n.ts`; a Storybook toolbar global `locale` (`en` | `pt`) that selects which initialised instance the decorator provides.
+
+Amended 2026-09-09 after review, on three measured findings.
+
+`initReactI18next` is no longer registered. The plugin's `init(instance)` calls react-i18next's `setI18n`, which writes a module-level default; since i18next runs external modules during `init()`, whichever instance initialises LAST owns every bare `useTranslation()` in the app. Proved by probe: react-i18next's default was the v1 singleton before `copyI18n.init()` and this instance after it, and no file under `apps/web/src` uses `I18nextProvider`, so v1 would have rendered raw `nav.about`-style keys. The decorator provides the instance explicitly and `useTranslation` reads props → context → default, so nothing needs the global. Task 8's boundary test also gained `../i18n` to keep `src/ui` from importing the v1 singleton and re-triggering this from inside the Storybook iframe.
+
+The decorator keeps one initialised instance per language instead of calling `changeLanguage` in an effect. The effect version was measured painting the previous language for one commit before switching, which is invisible today only because `initialGlobals.locale` and the instance's own language agree; it would surface the moment a story sets `globals: { locale: 'en' }`, and the story rendering after it would inherit the flip through the shared instance.
+
+Two of the copy assertions were vacuous: i18next 24 only splits keys it does not consider "natural language", so a key with spaces survives even with the separators at their defaults. The test now asserts the resolved options directly and uses a colon key with no spaces, which is the shape that actually fails when `nsSeparator` is on.
+
+Note for PR 3: the app root must wrap the tree in `I18nextProvider` with an initialised instance, exactly as this decorator does. There is no global default to fall back on any more, and that is deliberate — a missing provider fails loudly instead of silently resolving against whatever initialised last.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `apps/web/test/copy.test.ts`:
 
 ```ts
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import path from 'node:path'
+import { getI18n } from 'react-i18next'
 import { describe, expect, it } from 'vitest'
 import pt from '../src/copy/pt.json'
 import { createCopyInstance } from '../src/copy/i18n'
+import { STATUS_LABELS } from '../src/ui/primitives/StatusPill'
 
 describe('copy instance', () => {
   it('renders the key itself in English', async () => {
@@ -457,10 +582,132 @@ describe('copy instance', () => {
     expect(i18n.t('{{count}} in stock', { count: 3 })).toBe('3 in stock')
   })
 
+  it('does not split a colon key that has no spaces', async () => {
+    // The two assertions above pass even with the separators left at their defaults, because
+    // i18next only auto-detects "natural language" keys when they contain spaces. This is the
+    // shape that actually proves nsSeparator is off: without it, i18next reads `checkout` as a
+    // namespace and renders `title`.
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.t('checkout:title')).toBe('checkout:title')
+  })
+
+  it('has both separators disabled in its resolved options', async () => {
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.options.keySeparator).toBe(false)
+    expect(i18n.options.nsSeparator).toBe(false)
+  })
+
+  it("never becomes react-i18next's default instance", async () => {
+    // Guards the reason initReactI18next is not wired in: whichever instance inits last would
+    // own every bare useTranslation() call in the app, including v1's dotted keys.
+    const i18n = createCopyInstance('pt')
+    await i18n.init()
+    expect(getI18n()).toBeUndefined()
+  })
+
   it('has no empty translations in pt.json', () => {
     for (const [key, value] of Object.entries(pt as Record<string, string>)) {
       expect(value, `empty translation for "${key}"`).not.toBe('')
     }
+  })
+})
+
+// The test the spec asks for at line 177, and the only thing standing between a Portuguese reader
+// and an English sentence. Keys ARE the English copy and `fallbackLng` is false, so a `t()` whose
+// key is absent from pt.json renders the key — perfectly formed English, no console warning, no
+// failing test, no error anywhere. `src/ui` is as small as it will ever be, which makes this the
+// cheapest this scan will ever be to write.
+const UI_DIR = path.join(__dirname, '..', 'src', 'ui')
+
+// Stories are scanned too, deliberately. They run as tests against the same i18n instance, they
+// are the only executable spec of the UI layer, and PR 3's page stories will carry most of the
+// app's copy. A story whose key is missing paints the English sentence in the interactions panel
+// and in the docs page, where it reads as approved copy and gets pasted into a component — the
+// exact path this test exists to close. Scanning them costs one glob.
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry)
+    if (statSync(full).isDirectory()) return walk(full)
+    return /\.tsx?$/.test(entry) ? [full] : []
+  })
+}
+
+// Comments come out first. Half of these files DISCUSS `t('...')` in prose, and a scanner that
+// reads its own documentation reports keys no code ever calls. Whole-line comments only: a
+// trailing one would have to contain a `t(` call to matter, and stripping those needs a parser.
+function stripComments(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trimStart()
+      return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*')
+    })
+    .join('\n')
+}
+
+// `\bt\(` and not `t\(`: the word boundary is what keeps `getByText(`, `expect(` and `formatPrice(`
+// out of the results.
+const LITERAL_CALL = /\bt\(\s*(['"`])([^'"`]*)\1/g
+const DYNAMIC_CALL = /\bt\(\s*[^'"`\s)]/g
+
+const sources = walk(UI_DIR).map((file) => ({
+  name: path.relative(UI_DIR, file),
+  source: stripComments(readFileSync(file, 'utf8')),
+}))
+
+const used = sources.flatMap(({ name, source }) =>
+  [...source.matchAll(LITERAL_CALL)].map((match) => ({ name, key: match[2]! })),
+)
+
+const dynamic = sources.filter(({ source }) => DYNAMIC_CALL.test(source)).map(({ name }) => name)
+
+const ptKeys = Object.keys(pt as Record<string, string>)
+
+// Keys pt.json already carries for the components PR 3 brings. The scan cannot find a caller yet
+// and that is expected, not a defect — so the assertion below is a SUBSET check: it stays green as
+// PR 3 wires each one up, and goes red the day a key arrives that nothing accounts for.
+const PLANNED_FOR_PR3 = [
+  'Add to bag', // ProductPage, ProductCard
+  'Your bag is empty.', // CartDrawer
+  'Ship to: Brazil', // CheckoutShippingSection
+  '{{count}} in stock', // ProductPage stock line
+  'Made to order', // ProductCard badge
+  'Sold out', // ProductCard badge
+  // Suspected DEAD rather than planned: ImageFrame takes `alt` as a prop and builds no alt text of
+  // its own, so as designed nothing is left to call this. It stays because pt.json is outside this
+  // wave's scope; PR 3 either has ImageFrame build its own alt from the product name or deletes it.
+  'Photo of {{name}}',
+]
+
+describe('copy completeness', () => {
+  it('finds ui files and t() calls to check', () => {
+    // Without this the whole suite below is vacuously green when the glob or the regex breaks.
+    expect(sources.length).toBeGreaterThan(0)
+    expect(used.length).toBeGreaterThan(0)
+  })
+
+  it.each(used.map(({ name, key }) => [`${name} · ${key}`, key]))('%s is translated in pt.json', (_label, key) => {
+    expect(ptKeys).toContain(key)
+  })
+
+  it('translates the keys behind the dynamic t() call in StatusPill', () => {
+    for (const label of Object.values(STATUS_LABELS)) {
+      expect(ptKeys, `StatusPill renders "${label}" and pt.json has no translation for it`).toContain(label)
+    }
+  })
+
+  it('has no dynamic t() call the scan cannot account for', () => {
+    // A key built at runtime is invisible to the regex above. There is exactly one, its keys are
+    // checked by the test above it, and this pins that number: a second one fails here and has to
+    // be given the same treatment instead of quietly escaping the scan.
+    expect(dynamic).toEqual(['primitives/StatusPill.tsx'])
+  })
+
+  it('carries no key in pt.json that nothing accounts for', () => {
+    const reachable = new Set([...used.map((u) => u.key), ...Object.values(STATUS_LABELS), ...PLANNED_FOR_PR3])
+    expect(ptKeys.filter((key) => !reachable.has(key))).toEqual([])
   })
 })
 ```
@@ -484,13 +731,15 @@ Create `apps/web/src/copy/pt.json`:
   "Increase quantity": "Aumentar quantidade",
   "Awaiting payment": "Aguardando pagamento",
   "In production": "Em produção",
-  "Shipped": "Despachado",
-  "Out of stock": "Estoque insuficiente",
+  "Shipped": "Enviado",
+  "Insufficient stock": "Estoque insuficiente",
   "Expired": "Expirado",
   "Made to order": "Sob encomenda",
   "Sold out": "Esgotado",
   "Photo of {{name}}": "Foto de {{name}}",
-  "No photo yet": "Sem foto ainda"
+  "No photo yet": "Ainda sem foto",
+  "Switch to English": "Mudar para inglês",
+  "Switch to Portuguese": "Mudar para português"
 }
 ```
 
@@ -498,7 +747,6 @@ Create `apps/web/src/copy/i18n.ts`:
 
 ```ts
 import i18next, { type i18n as I18n } from 'i18next'
-import { initReactI18next } from 'react-i18next'
 import pt from './pt.json'
 
 export type Lang = 'pt' | 'en'
@@ -509,38 +757,45 @@ export const LANGS: readonly Lang[] = ['pt', 'en']
  * global one with its own (dotted-key) resources, and the two must not fight. Keys here are
  * the English sentence itself, so English needs no resource bundle — a missing key renders
  * as the key.
+ *
+ * Deliberately NOT wired with `initReactI18next`: that plugin makes whichever instance calls
+ * `init()` last react-i18next's module-level default, which would hand this instance every bare
+ * `useTranslation()` in the app — including v1's, whose dotted keys it cannot resolve. Consumers
+ * get it through `I18nextProvider` instead, which `useTranslation` reads before the default.
  */
 export function createCopyInstance(lang: Lang = 'pt'): I18n {
-  const instance = i18next.createInstance({
+  return i18next.createInstance({
     lng: lang,
     resources: { pt: { translation: pt } },
-    supportedLngs: LANGS as string[],
+    supportedLngs: [...LANGS],
     fallbackLng: false,
     keySeparator: false,
     nsSeparator: false,
     returnNull: false,
     interpolation: { escapeValue: false },
   })
-  instance.use(initReactI18next)
-  return instance
 }
 
 export const copyI18n = createCopyInstance('pt')
+
+// Initialised on creation: an exported-but-uninitialised instance is a trap, because `t()` on it
+// returns undefined silently rather than throwing. Synchronous here — inline resources, no
+// backend, no async detector.
+void copyI18n.init()
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/copy.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Wire the decorator and the toolbar**
 
 In `apps/web/.storybook/preview.tsx`, add the imports and replace the `preview` object:
 
 ```tsx
-import { useEffect } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { copyI18n } from '../src/copy/i18n'
+import { type Lang, createCopyInstance } from '../src/copy/i18n'
 ```
 
 ```tsx
@@ -548,6 +803,10 @@ const preview: Preview = {
   parameters: {
     controls: { expanded: true },
     backgrounds: { disable: true },
+    // The a11y addon ships `test: 'todo'`, which reports violations in the panel but never fails
+    // a run. Wiring the addon into the vitest project is only half the job; this is the half that
+    // makes an axe violation a red test.
+    a11y: { test: 'error' },
   },
   globalTypes: {
     locale: {
@@ -565,12 +824,9 @@ const preview: Preview = {
   initialGlobals: { locale: 'pt' },
   decorators: [
     (Story, context) => {
-      const locale = (context.globals.locale as 'pt' | 'en') ?? 'pt'
-      useEffect(() => {
-        void copyI18n.changeLanguage(locale)
-      }, [locale])
+      const locale = (context.globals.locale as Lang) ?? 'pt'
       return (
-        <I18nextProvider i18n={copyI18n} defaultNS="translation">
+        <I18nextProvider i18n={copyFor(locale)} defaultNS="translation">
           <div className="bg-paper text-ink font-body p-6">
             <Story />
           </div>
@@ -581,10 +837,28 @@ const preview: Preview = {
 }
 ```
 
-`copyI18n` must be initialised before Storybook renders — add right after the imports:
+An instance is created but not initialised, and until `init()` runs `t()` returns undefined and
+`changeLanguage()` throws. Rather than initialising one shared instance and mutating its language,
+keep one initialised instance per language and swap which one the provider gets — add right after
+the imports:
 
 ```tsx
-void copyI18n.init()
+// One initialised instance per language, created on first use. Swapping instances instead of
+// mutating a shared one means a story paints in the right language on its FIRST frame (an effect
+// would only fix it on the second) and no story can leak a language into the story after it.
+// `init()` completes synchronously here because the resources are inline and there is no backend
+// or async detector; if either is ever added, this has to be awaited before the first render.
+const instances = new Map<Lang, ReturnType<typeof createCopyInstance>>()
+
+function copyFor(locale: Lang) {
+  let instance = instances.get(locale)
+  if (!instance) {
+    instance = createCopyInstance(locale)
+    void instance.init()
+    instances.set(locale, instance)
+  }
+  return instance
+}
 ```
 
 If `initialGlobals` is not supported by the installed Storybook version, use `globalTypes.locale.defaultValue = 'pt'` instead and note it in your report.
@@ -703,23 +977,48 @@ git commit -m "feat(web): route href builders for the ui layer"
 ### Task 7: Typed fixtures
 
 **Files:**
-- Create: `apps/web/src/fixtures/products.ts`, `apps/web/src/fixtures/orders.ts`, `apps/web/src/fixtures/checkout.ts`
+- Create: `apps/web/src/fixtures/freeze.ts`, `apps/web/src/fixtures/products.ts`, `apps/web/src/fixtures/orders.ts`, `apps/web/src/fixtures/checkout.ts`
 - Test: `apps/web/test/fixtures.test.ts`
 
 **Interfaces:**
 - Consumes: `PublicProduct`, `AdminOrder`, `PublicOrder`, `CheckoutRequest`, `checkoutRequestSchema`, `checkoutRules`, `computeTotals` from `@shop/shared`.
-- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `adminOrders`, `publicPaidOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `brCheckoutErrors`, `cartLines` from `checkout.ts`.
+- Produces: `letter`, `drawing`, `soldOutDrawing`, `digitalLetter`, `inactiveGuide`, `products` (the active four), `productWithoutPhotos` from `products.ts`; `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (all five states), `publicPaidOrder`, `publicPendingOrder` from `orders.ts`; `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, `brCheckoutErrors`, `buyerCheckoutErrors`, `cartLines` from `checkout.ts`; `deepFreeze` from `freeze.ts`.
+
+Amended 2026-09-09 after the first implementation, on three defects it surfaced in its own report rather than hiding.
+
+`brCheckoutErrors` was hand-written and did not match what the app will actually receive. `apps/api/src/routes/checkout.ts:36-37` feeds `checkoutRules(...)` straight into the 400 response, so that object is exactly the function's output: the fixture's `buyer.name` key can never appear in it (zod rejects the buyer earlier, separately), and `shippingAddress.district` and `shippingAddress.state` — which the rules DO emit for an incomplete BR address — were missing. PR 3 would have built its error UI against a shape the API never sends. It is now derived from the real function, with the input kept beside it.
+
+`productWithoutPhotos` was an alias of `soldOutDrawing` — the same object, also a member of `products`. Two names for one object is a mutation trap for stories, and it welded together two unrelated scenarios. It is now its own product.
+
+`adminOrders` covered four of the five lifecycle states; `expired` had no fixture at all, so a status pill would have gone unrendered by every story.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `apps/web/test/fixtures.test.ts`:
 
 ```ts
-import { checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
+import { ORDER_STATUSES, SHIPPING_METHODS, checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
 import { describe, expect, it } from 'vitest'
-import { brCheckout, cartLines, digitalCheckout, intlCheckout } from '../src/fixtures/checkout'
-import { adminOrders } from '../src/fixtures/orders'
-import { products } from '../src/fixtures/products'
+import {
+  brCheckout,
+  brCheckoutErrors,
+  buyerCheckoutErrors,
+  cartLines,
+  digitalCheckout,
+  intlCheckout,
+} from '../src/fixtures/checkout'
+import { adminOrders, paidOrder, publicPaidOrder, publicPendingOrder } from '../src/fixtures/orders'
+import {
+  digitalLetter,
+  drawing,
+  inactiveGuide,
+  letter,
+  productWithoutPhotos,
+  products,
+  soldOutDrawing,
+} from '../src/fixtures/products'
+
+const allProducts = [letter, drawing, soldOutDrawing, digitalLetter, inactiveGuide, productWithoutPhotos]
 
 describe('fixtures', () => {
   it('ships four active products, one of them featured and one sold out', () => {
@@ -729,22 +1028,118 @@ describe('fixtures', () => {
     expect(products.some((p) => p.stock === 0)).toBe(true)
   })
 
-  it('offers checkout values the real schema and rules accept', () => {
-    for (const values of [brCheckout, intlCheckout, digitalCheckout]) {
+  it('gives every product its own description and specs', () => {
+    // Most of these are built by spreading another product, which used to leak the parent's prose
+    // (the pencil portrait described itself as an India ink drawing) and its specs array by
+    // reference. Both halves are checked: distinct text, and distinct array identities.
+    expect(new Set(allProducts.map((p) => p.description.pt)).size).toBe(allProducts.length)
+    expect(new Set(allProducts.map((p) => p.description.en)).size).toBe(allProducts.length)
+    const specs = allProducts.map((p) => p.specs).filter((s) => s.length > 0)
+    expect(new Set(specs).size).toBe(specs.length)
+  })
+
+  it('offers physical checkout values the real schema and rules accept', () => {
+    // Only the physical ones: `checkoutRules` returns null immediately when hasPhysical is false,
+    // so asserting toBeNull() for the digital fixture would pass no matter what it contained.
+    for (const values of [brCheckout, intlCheckout]) {
       const parsed = checkoutRequestSchema.parse(values)
-      const hasPhysical = values !== digitalCheckout
-      expect(checkoutRules(parsed, hasPhysical)).toBeNull()
+      expect(checkoutRules(parsed, true)).toBeNull()
     }
   })
 
-  it('has cart lines whose totals add up', () => {
+  it('offers a digital checkout that needs no address', () => {
+    const parsed = checkoutRequestSchema.parse(digitalCheckout)
+    expect(parsed.items.map((i) => i.slug)).toEqual([digitalLetter.slug])
+    expect(parsed.shippingAddress).toBeUndefined()
+    expect(parsed.shippingMethod).toBeUndefined()
+    // Priced WITH a shipping method selected, deliberately. `computeTotals` short-circuits to zero
+    // shipping when the method is null, so passing null here would hold for a physical cart too.
+    // Passing 'sedex' means the zero can only come from `hasPhysicalItems` being false.
+    // `type` comes from the product, not a hard-coded 'digital': that is what makes this assert
+    // something about the FIXTURE rather than about the literal typed on the line below.
+    const lines = parsed.items.map((i) => ({ priceCents: digitalLetter.priceCents, qty: i.qty, type: digitalLetter.type }))
+    expect(computeTotals(lines, 'sedex')).toEqual({
+      itemsCents: digitalLetter.priceCents,
+      shippingCents: 0,
+      totalCents: digitalLetter.priceCents,
+    })
+  })
+
+  it('has cart lines whose totals match the paid order', () => {
+    // Anchored on independent numbers: `totalCents === itemsCents + shippingCents` is true by
+    // construction of computeTotals and would hold for any cart at all.
     const totals = computeTotals(cartLines, 'sedex')
-    expect(totals.itemsCents).toBeGreaterThan(0)
-    expect(totals.totalCents).toBe(totals.itemsCents + totals.shippingCents)
+    expect(totals).toEqual({
+      itemsCents: paidOrder.amounts.itemsCents,
+      shippingCents: paidOrder.amounts.shippingCents,
+      totalCents: paidOrder.amounts.totalCents,
+    })
+    expect(publicPaidOrder.totalCents).toBe(totals.totalCents)
+    expect(publicPaidOrder.eta).toEqual(SHIPPING_METHODS.sedex.eta)
+    expect(publicPendingOrder.eta).toEqual(SHIPPING_METHODS.pac.eta)
   })
 
   it('covers every admin order status', () => {
-    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(['pending', 'paid', 'shipped', 'oversold']))
+    // Derived from the shared union, so a sixth state added upstream fails here instead of
+    // silently going unrendered by every story.
+    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(ORDER_STATUSES))
+  })
+
+  it('prices every admin order with the real shipping table', () => {
+    for (const order of adminOrders) {
+      const lines = order.items.map((i) => ({ priceCents: i.unitAmountCents, qty: i.qty, type: 'physical' as const }))
+      expect({ id: order.id, ...computeTotals(lines, order.shippingMethod) }).toEqual({
+        id: order.id,
+        itemsCents: order.amounts.itemsCents,
+        shippingCents: order.amounts.shippingCents,
+        totalCents: order.amounts.totalCents,
+      })
+    }
+  })
+
+  it('keeps every order timeline ordered and every Stripe session unique', () => {
+    // Orders are built by spreading `paidOrder`, which used to carry its `paidAt` and its
+    // `stripeSessionId` into orders that then overrode only `createdAt`: one shipped four days
+    // before it was paid, another was paid before it existed, and three shared one Stripe session.
+    for (const o of adminOrders) {
+      const stamps = [o.createdAt, o.paidAt, o.shippedAt].filter((s): s is string => s != null)
+      expect({ id: o.id, stamps }).toEqual({ id: o.id, stamps: [...stamps].sort() })
+    }
+    // Not filtered on presence: every order that reached Stripe has a session id, so an order
+    // missing one must fail here rather than quietly drop out of the uniqueness check.
+    const sessions = adminOrders.map((o) => o.stripeSessionId)
+    expect(sessions.every((s) => typeof s === 'string' && s.length > 0)).toBe(true)
+    expect(new Set(sessions).size).toBe(adminOrders.length)
+  })
+
+  it('exposes the checkout errors the API can really send', () => {
+    // Two exact key lists, and nothing else. The rules never key on the buyer — a buyer error
+    // arrives from the zod path instead, in its own response, which is what `buyerCheckoutErrors`
+    // is for — and both halves of that sentence are already stated by the lists below. The
+    // `startsWith('buyer')` guards that used to sit beside them could not fail: each one was
+    // decided by the exact-key assertion on the line above it.
+    expect(Object.keys(brCheckoutErrors).sort()).toEqual([
+      'shippingAddress.district',
+      'shippingAddress.number',
+      'shippingAddress.postalCode',
+      'shippingAddress.state',
+      'shippingMethod',
+    ])
+    expect(Object.keys(buyerCheckoutErrors).sort()).toEqual(['buyer.email', 'buyer.name'])
+  })
+
+  it('freezes the fixtures so one story cannot corrupt another', () => {
+    expect(() => {
+      ;(letter.specs as unknown as unknown[]).push({})
+    }).toThrow()
+    expect(() => {
+      ;(paidOrder.shippingAddress as unknown as Record<string, string>).city = 'Nowhere'
+    }).toThrow()
+    // Spreading a frozen fixture to override a field still works — that is how stories vary them.
+    const varied = { ...letter, priceCents: 999, name: { pt: 'Outra', en: 'Other' } }
+    expect(varied.priceCents).toBe(999)
+    expect(varied.slug).toBe(letter.slug)
+    expect(letter.priceCents).toBe(4500)
   })
 })
 ```
@@ -754,15 +1149,50 @@ describe('fixtures', () => {
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/fixtures.test.ts`
 Expected: FAIL — cannot find the fixture modules.
 
+- [ ] **Step 3a: The freeze helper**
+
+Create `apps/web/src/fixtures/freeze.ts`:
+
+```ts
+/**
+ * Fixtures are shared constants: many of them are built by spreading another one, so their nested
+ * objects and arrays are the SAME references (`productWithoutPhotos.specs === letter.specs`, every
+ * order sharing one `shippingAddress`). Rebuilding each nested literal by hand would be verbose
+ * and would still rot. Freezing them instead turns a story that mutates a fixture from a silent
+ * corruption of some other story into an immediate TypeError, which is the failure mode we want.
+ * Spreading a frozen object to override fields still works, which is how stories should vary them.
+ */
+export function deepFreeze<T>(value: T): T {
+  if (value && (typeof value === 'object' || typeof value === 'function') && !Object.isFrozen(value)) {
+    Object.freeze(value)
+    for (const key of Reflect.ownKeys(value)) {
+      deepFreeze((value as Record<PropertyKey, unknown>)[key])
+    }
+  }
+  return value
+}
+```
+
 - [ ] **Step 3: Implement the product fixtures**
+
+Every exported fixture in Steps 3-5 is wrapped in `deepFreeze(...)`.
+
+Each product must carry its OWN `description` and `specs` written for that product. Several of them
+are built by spreading another product, and the first implementation inherited the parent's prose:
+the pencil portrait described itself as an India ink drawing, the PDF guide as a handwritten letter
+posted to you, the notebook as a letter. A product-detail story showing a description that belongs
+to a different product is a content defect, not a nit — write real pt/en text for each.
 
 Create `apps/web/src/fixtures/products.ts`:
 
 ```ts
 import type { PublicProduct } from '@shop/shared'
+import { deepFreeze } from './freeze'
 
 // Sample data for stories and tests. Content mirrors the approved prototype's catalogue.
-export const letter: PublicProduct = {
+// Every product carries its OWN description and specs: several are built by spreading another
+// product, and inheriting the parent's prose put the wrong copy on the wrong product page.
+export const letter: PublicProduct = deepFreeze({
   id: 'p-letter',
   slug: 'carta-escrita',
   name: { pt: 'Carta escrita à mão', en: 'Handwritten letter' },
@@ -785,9 +1215,9 @@ export const letter: PublicProduct = {
   ],
   featured: true,
   active: true,
-}
+})
 
-export const drawing: PublicProduct = {
+export const drawing: PublicProduct = deepFreeze({
   id: 'p-drawing',
   slug: 'desenho-nanquim',
   name: { pt: 'Desenho a nanquim', en: 'India ink drawing' },
@@ -805,20 +1235,29 @@ export const drawing: PublicProduct = {
   ],
   featured: false,
   active: true,
-}
+})
 
-export const soldOutDrawing: PublicProduct = {
+export const soldOutDrawing: PublicProduct = deepFreeze({
   ...drawing,
   id: 'p-portrait',
   slug: 'retrato-lapis',
   name: { pt: 'Retrato a lápis', en: 'Pencil portrait' },
   subtitle: { pt: 'A4 · sob encomenda', en: 'A4 · made to order' },
+  description: {
+    pt: 'Retrato a grafite sobre papel A4, desenhado a partir de uma foto que você me manda. A tiragem deste ano acabou.',
+    en: 'A graphite portrait on A4 paper, drawn from a photo you send me. This year’s run is sold out.',
+  },
   priceCents: 18000,
   stock: 0,
+  specs: [
+    { key: { pt: 'Técnica', en: 'Medium' }, value: { pt: 'Grafite sobre papel', en: 'Graphite on paper' } },
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A4, 21 × 29,7 cm', en: 'A4, 21 × 29.7 cm' } },
+    { key: { pt: 'Prazo', en: 'Lead time' }, value: { pt: '3 semanas', en: '3 weeks' } },
+  ],
   photos: [],
-}
+})
 
-export const digitalLetter: PublicProduct = {
+export const digitalLetter: PublicProduct = deepFreeze({
   id: 'p-digital',
   slug: 'carta-digital',
   name: { pt: 'Carta digital', en: 'Digital letter' },
@@ -834,35 +1273,90 @@ export const digitalLetter: PublicProduct = {
   photos: [],
   featured: false,
   active: true,
-}
+})
 
-export const inactiveGuide: PublicProduct = {
+export const inactiveGuide: PublicProduct = deepFreeze({
   ...digitalLetter,
   id: 'p-guide',
   slug: 'guia-nanquim-pdf',
   name: { pt: 'Guia de nanquim (PDF)', en: 'India ink guide (PDF)' },
   subtitle: { pt: 'Download · 24 páginas', en: 'Download · 24 pages' },
+  description: {
+    pt: 'Guia em PDF com o material, os traços e os exercícios que uso para desenhar a nanquim. Saiu de catálogo.',
+    en: 'A PDF guide to the materials, strokes and exercises I use to draw in India ink. No longer on sale.',
+  },
   priceCents: 1800,
+  specs: [
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'PDF, 24 páginas', en: 'PDF, 24 pages' } },
+    { key: { pt: 'Idioma', en: 'Language' }, value: { pt: 'Português e inglês', en: 'Portuguese and English' } },
+  ],
   active: false,
-}
+})
 
-export const productWithoutPhotos = soldOutDrawing
-export const products: PublicProduct[] = [letter, drawing, soldOutDrawing, digitalLetter]
+// Its own object, deliberately not an alias of `soldOutDrawing`: two named fixtures pointing at
+// one object let a story that mutates one corrupt the other, and it also conflates two separate
+// scenarios — a story about the missing-photo placeholder should not silently also be testing
+// the sold-out state.
+export const productWithoutPhotos: PublicProduct = deepFreeze({
+  ...letter,
+  id: 'p-no-photo',
+  slug: 'caderno-costurado',
+  name: { pt: 'Caderno costurado', en: 'Hand-sewn notebook' },
+  subtitle: { pt: 'A5 · 80 páginas', en: 'A5 · 80 pages' },
+  description: {
+    pt: 'Caderno costurado à mão, capa de papelão revestido e miolo de papel pólen. Ainda não fotografei este.',
+    en: 'A hand-sewn notebook with a covered board cover and cream paper inside. I have not photographed this one yet.',
+  },
+  specs: [
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A5, 80 páginas', en: 'A5, 80 pages' } },
+    { key: { pt: 'Costura', en: 'Binding' }, value: { pt: 'Costura copta, à vista', en: 'Exposed Coptic stitch' } },
+    { key: { pt: 'Papel', en: 'Paper' }, value: { pt: 'Pólen 90g', en: '90gsm cream paper' } },
+  ],
+  photos: [],
+  featured: false,
+})
+
+export const products: PublicProduct[] = deepFreeze([letter, drawing, soldOutDrawing, digitalLetter])
 ```
 
 - [ ] **Step 4: Implement the order fixtures**
+
+Three requirements the first implementation missed, all of them because orders are built by
+spreading `paidOrder`:
+
+- **The timeline must be internally consistent.** `shippedOrder` inherited `paidAt` while
+  overriding `createdAt`/`shippedAt` and ended up shipped four days before it was paid;
+  `oversoldOrder` ended up paid before it was created. Every order must satisfy
+  `createdAt <= paidAt <= shippedAt` for whichever of those it has. An admin order-detail story
+  renders this as a timeline, so a backwards one is visible, not theoretical.
+- **`stripeSessionId` must be unique per order.** Three orders shared `cs_test_411`, which points
+  three admin rows at one Stripe session.
+- **Every order that reached Stripe carries a `stripeSessionId`.** `apps/api/src/routes/checkout.ts:94`
+  writes it onto the order immediately after the session is created, so `pending` and `expired`
+  orders have one too — an order without one exists only in the crash window between those two
+  writes, which PR 1's boot-time sweep expires. The field is genuinely optional in the type, so
+  PR 4's admin UI must still handle its absence; add a fixture for that case there if the UI needs it.
+- **Add `publicPendingOrder`.** The spec's Done page covers both pending and paid
+  (`docs/superpowers/specs/2026-09-07-webshop-v2-design.md`, Done page), and only the paid shape
+  existed, so the pending variant had no fixture to render from.
+
 
 Create `apps/web/src/fixtures/orders.ts`:
 
 ```ts
 import type { AdminOrder, PublicOrder } from '@shop/shared'
+import { deepFreeze } from './freeze'
 
 const items: AdminOrder['items'] = [
   { productId: 'p-letter', slug: 'carta-escrita', name: { pt: 'Carta escrita à mão', en: 'Handwritten letter' }, qty: 1, unitAmountCents: 4500 },
   { productId: 'p-drawing', slug: 'desenho-nanquim', name: { pt: 'Desenho a nanquim', en: 'India ink drawing' }, qty: 2, unitAmountCents: 12000 },
 ]
 
-export const pendingOrder: AdminOrder = {
+// Timelines are internally consistent: every order satisfies createdAt <= paidAt <= shippedAt for
+// whichever of those it carries. Orders built by spreading `paidOrder` must override `paidAt` too,
+// or they inherit a payment that happened before they existed. An admin order-detail story renders
+// this as a timeline, so a backwards one is visible rather than theoretical.
+export const pendingOrder: AdminOrder = deepFreeze({
   id: 'o-1',
   orderNumber: 410,
   status: 'pending',
@@ -883,9 +1377,16 @@ export const pendingOrder: AdminOrder = {
   locale: 'pt',
   items: [items[0]!],
   amounts: { itemsCents: 4500, shippingCents: 2200, totalCents: 6700, currency: 'brl' },
-}
+  // Every order that reached Stripe carries a session id, pending and expired included:
+  // `apps/api/src/routes/checkout.ts:94` writes it immediately after creating the session, and
+  // `models/order.ts:46` indexes it unique + sparse. The field is nonetheless optional in the
+  // type because of the crash window between those two writes — an order created but killed
+  // before the id is persisted. `lib/orphans.ts` sweeps those to `expired` at boot after an hour.
+  // So PR 4's admin UI must still handle its absence; add a fixture for it there if the UI needs one.
+  stripeSessionId: 'cs_test_410',
+})
 
-export const paidOrder: AdminOrder = {
+export const paidOrder: AdminOrder = deepFreeze({
   ...pendingOrder,
   id: 'o-2',
   orderNumber: 411,
@@ -896,32 +1397,55 @@ export const paidOrder: AdminOrder = {
   items,
   amounts: { itemsCents: 28500, shippingCents: 4100, totalCents: 32600, currency: 'brl' },
   stripeSessionId: 'cs_test_411',
-}
+})
 
-export const shippedOrder: AdminOrder = {
+export const shippedOrder: AdminOrder = deepFreeze({
   ...paidOrder,
   id: 'o-3',
   orderNumber: 412,
   status: 'shipped',
   createdAt: '2026-08-28T15:00:00.000Z',
+  paidAt: '2026-08-28T15:04:00.000Z',
   shippedAt: '2026-08-30T10:00:00.000Z',
   trackingCode: 'BR8841200SC',
   buyer: { name: 'Júlia Ferreira', email: 'julia@example.com' },
-}
+  stripeSessionId: 'cs_test_412',
+})
 
-export const oversoldOrder: AdminOrder = {
+export const oversoldOrder: AdminOrder = deepFreeze({
   ...paidOrder,
   id: 'o-4',
   orderNumber: 413,
   status: 'oversold',
   createdAt: '2026-09-04T18:45:00.000Z',
+  paidAt: '2026-09-04T18:46:00.000Z',
   buyer: { name: 'Bruno Tavares', email: 'bruno@example.com' },
   notes: undefined,
-}
+  stripeSessionId: 'cs_test_413',
+})
 
-export const adminOrders: AdminOrder[] = [oversoldOrder, shippedOrder, paidOrder, pendingOrder]
+export const expiredOrder: AdminOrder = deepFreeze({
+  ...pendingOrder,
+  id: 'o-5',
+  orderNumber: 409,
+  status: 'expired',
+  createdAt: '2026-09-02T09:10:00.000Z',
+  buyer: { name: 'Helena Prado', email: 'helena@example.com' },
+  notes: undefined,
+  stripeSessionId: 'cs_test_409',
+})
 
-export const publicPaidOrder: PublicOrder = {
+// All five lifecycle states — the admin table renders this list, so a missing state
+// means a status pill nobody ever sees in a story. Not sorted: ordering is the table's job.
+export const adminOrders: AdminOrder[] = deepFreeze([
+  oversoldOrder,
+  shippedOrder,
+  paidOrder,
+  pendingOrder,
+  expiredOrder,
+])
+
+export const publicPaidOrder: PublicOrder = deepFreeze({
   orderNumber: 411,
   status: 'paid',
   items: items.map((i) => ({ name: i.name, qty: i.qty })),
@@ -929,7 +1453,18 @@ export const publicPaidOrder: PublicOrder = {
   currency: 'brl',
   shippingMethod: 'sedex',
   eta: { pt: '3 a 5 dias úteis', en: '3–5 business days' },
-}
+})
+
+/** The Done page covers pending as well as paid (spec, "Done page"), so both shapes exist. */
+export const publicPendingOrder: PublicOrder = deepFreeze({
+  orderNumber: 410,
+  status: 'pending',
+  items: [{ name: items[0]!.name, qty: items[0]!.qty }],
+  totalCents: 6700,
+  currency: 'brl',
+  shippingMethod: 'pac',
+  eta: { pt: '8 a 12 dias úteis', en: '8–12 business days' },
+})
 ```
 
 - [ ] **Step 5: Implement the checkout fixtures**
@@ -937,7 +1472,8 @@ export const publicPaidOrder: PublicOrder = {
 Create `apps/web/src/fixtures/checkout.ts`:
 
 ```ts
-import type { CheckoutRequest, FieldErrors, TotalsLine } from '@shop/shared'
+import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRequestSchema, checkoutRules } from '@shop/shared'
+import { deepFreeze } from './freeze'
 import { drawing, letter } from './products'
 
 const buyer: CheckoutRequest['buyer'] = {
@@ -946,13 +1482,18 @@ const buyer: CheckoutRequest['buyer'] = {
   phone: '+55 31 98812-4407',
 }
 
-export const emptyCheckout: CheckoutRequest = {
+/**
+ * Initial form state, deliberately NOT schema-valid: it is typed `CheckoutRequest` for the form's
+ * benefit but fails `checkoutRequestSchema` on the empty name and email. Never feed it to
+ * `.parse` — render it, fill it in, then parse.
+ */
+export const emptyCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }],
   locale: 'pt',
   buyer: { name: '', email: '' },
-}
+})
 
-export const brCheckout: CheckoutRequest = {
+export const brCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }, { slug: drawing.slug, qty: 2 }],
   locale: 'pt',
   buyer,
@@ -968,9 +1509,9 @@ export const brCheckout: CheckoutRequest = {
   },
   shippingMethod: 'sedex',
   notes: 'É presente, capricha no embrulho.',
-}
+})
 
-export const intlCheckout: CheckoutRequest = {
+export const intlCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }],
   locale: 'en',
   buyer: { name: 'Sam Reyes', email: 'sam@example.com' },
@@ -982,32 +1523,81 @@ export const intlCheckout: CheckoutRequest = {
     state: 'NY',
   },
   shippingMethod: 'intl',
-}
+})
 
-export const digitalCheckout: CheckoutRequest = {
+export const digitalCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: 'carta-digital', qty: 1 }],
   locale: 'pt',
   buyer,
+})
+
+/**
+ * An incomplete Brazilian address, kept next to the errors it produces so the two cannot drift.
+ */
+export const incompleteBrCheckout: CheckoutRequest = deepFreeze({
+  ...brCheckout,
+  shippingAddress: {
+    country: 'BR',
+    postalCode: '3015',
+    street: 'Rua Sapucaí',
+    number: '',
+    city: 'Belo Horizonte',
+    state: '',
+  },
+  shippingMethod: undefined,
+})
+
+// Narrowed rather than cast: `checkoutRules` returns `FieldErrors | null`, and `as FieldErrors`
+// would turn a future non-violating input into a null wearing the wrong type, surfacing as an
+// obscure TypeError inside whichever story reads a key off it.
+const derivedBrCheckoutErrors = checkoutRules(incompleteBrCheckout, true)
+if (!derivedBrCheckoutErrors) {
+  throw new Error('incompleteBrCheckout must violate the BR rules: brCheckoutErrors is derived from them')
 }
 
-/** What the checkout page shows after submitting an incomplete Brazilian address. */
-export const brCheckoutErrors: FieldErrors = {
-  'buyer.name': ['required'],
-  'shippingAddress.postalCode': ['invalid_cep'],
-  'shippingAddress.number': ['required'],
-  shippingMethod: ['required'],
+/**
+ * The cross-field-rule half of what the checkout page can receive. DERIVED from the real rules
+ * rather than written by hand: `apps/api/src/routes/checkout.ts:36-37` passes `checkoutRules(...)`
+ * straight into the 400 response, so this object's shape is that function's output and nothing
+ * else. It carries no `buyer.*` key — not because the page can never receive one, but because the
+ * rules never produce one; see `buyerCheckoutErrors` for the other half.
+ */
+export const brCheckoutErrors: FieldErrors = deepFreeze(derivedBrCheckoutErrors)
+
+// The OTHER shape the page can receive, derived the same way rather than hand-written.
+// `apps/api/src/errors.ts:26-33` turns a ZodError into `fieldErrors` keyed by
+// `issue.path.join('.')` — the SAME response field and the SAME key shape as the rules produce,
+// so `{ 'buyer.name': [...] }` is a payload the checkout page really does get. What never happens
+// is the two arriving MIXED: the parse at `routes/checkout.ts:21` runs before the rules at :36,
+// so a request with a bad buyer is rejected before `checkoutRules` is ever called.
+const buyerParse = checkoutRequestSchema.safeParse(emptyCheckout)
+if (buyerParse.success) {
+  throw new Error('emptyCheckout must fail the schema: buyerCheckoutErrors is derived from its issues')
+}
+const zodFieldErrors: FieldErrors = {}
+for (const issue of buyerParse.error.issues) {
+  const key = issue.path.length ? issue.path.join('.') : '_'
+  ;(zodFieldErrors[key] ??= []).push(issue.message)
 }
 
-export const cartLines: TotalsLine[] = [
+/**
+ * NOTE for the checkout UI: the values here are raw English prose straight from zod ("String must
+ * contain at least 2 character(s)"), while `brCheckoutErrors` carries stable codes (`invalid_cep`,
+ * `required`). A single code-keyed translation table cannot render both, and this shop is
+ * bilingual — that is a PR 3/PR 5 decision, flagged here so it is not discovered late.
+ */
+export const buyerCheckoutErrors: FieldErrors = deepFreeze(zodFieldErrors)
+
+export const cartLines: TotalsLine[] = deepFreeze([
   { priceCents: letter.priceCents, qty: 1, type: 'physical' },
   { priceCents: drawing.priceCents, qty: 2, type: 'physical' },
-]
+])
 ```
 
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/fixtures.test.ts`
-Expected: PASS (4 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
+Expected: PASS (10 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
 
 - [ ] **Step 7: Commit**
 
@@ -1019,6 +1609,25 @@ git commit -m "feat(web): typed fixtures for stories and tests"
 ---
 
 ### Task 8: The UI purity rule, enforced
+
+
+Amended 2026-09-09 after the first implementation reported four ways the guard could be walked
+past — it found them by probing its own test rather than by declaring victory when it went green.
+Two are closed here.
+
+The forbidden-prefix list only reached `../../`, so any file nested two levels under `src/ui`
+escaped every relative rule with `../../../lib`. PR 3 fills this directory, so that hole would
+have opened exactly when it started to matter. The rule is now an allowlist: a bare specifier must
+be one of the four packages the layer is allowed to know about, and a relative specifier must
+resolve to a path inside `src/ui`.
+
+The scan also only matched `from '...'`, leaving side-effect imports, dynamic `import()` and
+`require()` invisible. All four forms are now matched.
+
+Two gaps are accepted rather than closed, and recorded so nobody rediscovers them as bugs:
+`*.stories.tsx` files are deliberately exempt (they must import the storybook packages, and they
+already run as tests in the browser project), and the globals check is a raw-source scan, so
+`document.` inside a comment is a false positive — loud, harmless and easy to fix when it happens.
 
 **Files:**
 - Test: `apps/web/test/ui-boundaries.test.ts`
@@ -1037,29 +1646,48 @@ import { describe, expect, it } from 'vitest'
 
 const UI_DIR = path.join(__dirname, '..', 'src', 'ui')
 
-const FORBIDDEN_IMPORTS = [
-  'react-router',
-  '@tanstack/react-query',
-  '../app',
-  '../../app',
-  '../lib',
-  '../../lib',
-  '../pages',
-  '../../pages',
-  '../components',
-  '../../components',
+// The UI layer declares what it MAY import rather than what it may not. A blacklist of relative
+// prefixes only reaches as deep as the prefixes someone remembered to write: a file two levels
+// down under src/ui escapes `../lib` and `../../lib` with `../../../lib`. Resolving the path and
+// asking whether it stayed inside src/ui has no such hole.
+const ALLOWED_PACKAGES = ['react', 'react-dom', 'react-i18next', '@shop/shared']
+
+// Four ways into the module graph. A check that only sees `from '...'` leaves the other three
+// doors open — side-effect imports, dynamic imports and require all reach the same modules.
+const SPECIFIER_PATTERNS = [
+  /\bfrom\s+['"]([^'"]+)['"]/g,
+  /\bimport\s+['"]([^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ]
 
-// Browser globals: the UI layer is rendered by the app layer and by Storybook, and must not
-// reach for state that only exists in one of them.
+// The layer is stateless by design — state and effects live in `src/app`. The import allowlist
+// does not catch this on its own, because `react` is legitimately allowed: a primitive could
+// import `useState` from it and pass every other check.
+const FORBIDDEN_HOOKS = [/\buseState\b/, /\buseReducer\b/, /\buseEffect\b/, /\buseLayoutEffect\b/, /\buseRef\b/]
+
 const FORBIDDEN_GLOBALS = [/\bwindow\./, /\bdocument\./, /\blocalStorage\b/, /\bsessionStorage\b/, /\bfetch\(/]
 
+// Stories are exempt on purpose: they import the storybook packages by necessity, and they are
+// already executed as tests by the browser project, so a broken one fails there.
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = path.join(dir, entry)
     if (statSync(full).isDirectory()) return walk(full)
     return /\.tsx?$/.test(entry) && !/\.stories\.tsx?$/.test(entry) ? [full] : []
   })
+}
+
+function specifiersOf(source: string): string[] {
+  return SPECIFIER_PATTERNS.flatMap((pattern) => [...source.matchAll(pattern)].map((m) => m[1]!))
+}
+
+function isAllowed(specifier: string, file: string): boolean {
+  if (specifier.startsWith('.')) {
+    const resolved = path.resolve(path.dirname(file), specifier)
+    return resolved === UI_DIR || resolved.startsWith(`${UI_DIR}${path.sep}`)
+  }
+  return ALLOWED_PACKAGES.some((p) => specifier === p || specifier.startsWith(`${p}/`))
 }
 
 describe('ui layer boundaries', () => {
@@ -1071,12 +1699,15 @@ describe('ui layer boundaries', () => {
 
   it.each(files.map((f) => [path.relative(UI_DIR, f), f]))('%s imports nothing stateful', (_name, file) => {
     const source = readFileSync(file, 'utf8')
-    const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!)
-    for (const specifier of imports) {
-      expect(
-        FORBIDDEN_IMPORTS.some((f) => specifier === f || specifier.startsWith(`${f}/`)),
-        `${specifier} is not allowed in src/ui`,
-      ).toBe(false)
+    for (const specifier of specifiersOf(source)) {
+      expect(isAllowed(specifier, file), `${specifier} is not allowed in src/ui`).toBe(true)
+    }
+  })
+
+  it.each(files.map((f) => [path.relative(UI_DIR, f), f]))('%s holds no state', (_name, file) => {
+    const source = readFileSync(file, 'utf8')
+    for (const pattern of FORBIDDEN_HOOKS) {
+      expect(pattern.test(source), `${pattern} is not allowed in src/ui`).toBe(false)
     }
   })
 
@@ -1132,7 +1763,7 @@ import type { ReactNode } from 'react'
 
 export function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`font-mono text-[11px] uppercase tracking-[0.18em] opacity-60 ${className}`}>{children}</div>
+    <div className={`font-mono text-[11px] uppercase tracking-[0.18em] opacity-65 ${className}`}>{children}</div>
   )
 }
 ```
@@ -1154,7 +1785,7 @@ export function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div>
       <div className="font-display text-[clamp(30px,3.4vw,42px)] leading-none">{value}</div>
-      <div className="font-mono mt-2.5 text-[11px] uppercase tracking-[0.14em] opacity-55">{label}</div>
+      <div className="font-mono mt-2.5 text-[11px] uppercase tracking-[0.14em] opacity-65">{label}</div>
     </div>
   )
 }
@@ -1166,11 +1797,15 @@ Create `apps/web/src/ui/primitives/StatusPill.tsx`:
 import type { OrderStatus } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 
-const LABEL: Record<OrderStatus, string> = {
+// Exported for the copy-completeness scan. `t(STATUS_LABELS[status])` is a dynamic call: the
+// scanner reads keys out of `t('literal')` call sites and there is no literal here, so these five
+// keys would be the one part of the UI's copy nothing checked against pt.json. Exporting the map
+// is what lets the test check them the same way it checks every other key.
+export const STATUS_LABELS: Record<OrderStatus, string> = {
   pending: 'Awaiting payment',
   paid: 'In production',
   shipped: 'Shipped',
-  oversold: 'Out of stock',
+  oversold: 'Insufficient stock',
   expired: 'Expired',
 }
 
@@ -1179,14 +1814,14 @@ const TONE: Record<OrderStatus, string> = {
   paid: 'bg-ink text-paper',
   shipped: 'border border-ink',
   oversold: 'bg-accent text-paper',
-  expired: 'border border-ink/30 opacity-50',
+  expired: 'border border-ink/30 opacity-65',
 }
 
 export function StatusPill({ status }: { status: OrderStatus }) {
   const { t } = useTranslation()
   return (
     <span className={`font-mono inline-flex px-3 py-1 text-[10px] uppercase tracking-[0.12em] ${TONE[status]}`}>
-      {t(LABEL[status])}
+      {t(STATUS_LABELS[status])}
     </span>
   )
 }
@@ -1279,7 +1914,14 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect } from 'storybook/test'
 import { StatusPill } from './StatusPill'
 
-const meta = { component: StatusPill, title: 'Primitives/StatusPill' } satisfies Meta<typeof StatusPill>
+// `status` is a required prop, so `StoryObj<typeof meta>` demands `args` on EVERY story —
+// including a gallery story that renders its own tree and never reads them. Declaring the
+// default here is what makes story-level `args` optional, so `EveryStatus` can be render-only.
+const meta = {
+  component: StatusPill,
+  title: 'Primitives/StatusPill',
+  args: { status: 'pending' },
+} satisfies Meta<typeof StatusPill>
 export default meta
 type Story = StoryObj<typeof meta>
 
@@ -1299,6 +1941,25 @@ export const EveryStatus: Story = {
     </div>
   ),
 }
+
+// The only story in the suite that runs the preview's SECOND i18n instance. `preview.tsx` ships a
+// pt/en toolbar and `initialGlobals: { locale: 'pt' }`, and every play assertion on the branch pins
+// a pt-BR literal — so without this the English path (a per-language memoised instance, not a
+// `changeLanguage` call) is executed by nothing in CI, and the first developer to flip the toolbar
+// is the one who finds out. StatusPill is where it belongs: its labels are the whole component.
+//
+// In English the key IS the copy: `pt.json` is never consulted and `t('In production')` returns
+// the key itself. One assertion, and it is the whole contract — the same query on the pt default
+// finds 'Em produção' and throws, which is what makes it about the locale rather than about the
+// label. A second, negative "and 'Em produção' is gone" line would read well and could never fail:
+// the query above it has already decided it.
+export const PaidInEnglish: Story = {
+  args: { status: 'paid' },
+  globals: { locale: 'en' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('In production')).toBeInTheDocument()
+  },
+}
 ```
 
 Create `apps/web/src/ui/primitives/RuledList.stories.tsx`:
@@ -1311,14 +1972,19 @@ const meta = { component: RuledList, title: 'Primitives/RuledList' } satisfies M
 export default meta
 type Story = StoryObj<typeof meta>
 
+// Rows go through `args.children` rather than a `render` override: `children` is required, so a
+// render-only story would still owe `args` it never reads. The fragment adds no DOM node, so the
+// three rows stay direct flex children of the list.
 export const ThreeRows: Story = {
-  render: () => (
-    <RuledList>
-      <RuledRow>Subtotal</RuledRow>
-      <RuledRow>Frete</RuledRow>
-      <RuledRow>Total</RuledRow>
-    </RuledList>
-  ),
+  args: {
+    children: (
+      <>
+        <RuledRow>Subtotal</RuledRow>
+        <RuledRow>Frete</RuledRow>
+        <RuledRow>Total</RuledRow>
+      </>
+    ),
+  },
 }
 ```
 
@@ -1328,6 +1994,18 @@ If `storybook/test` does not resolve, try `@storybook/test`; report which one th
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook`
 Expected: PASS — every story renders, and the three `play` functions assert. The `StatusPill` assertion proves the i18n decorator is wired (default locale `pt`).
+
+Accessibility is gating here and, since Task 4's fourth amendment, it can finally see colour. The
+primitives must meet WCAG AA against the paper background: 4.5:1 for normal text, 3:1 for text at
+24px or above. Where a value from the approved prototype fails, adjust it by the smallest amount
+that passes — raise an opacity, darken a tone — and report the before/after ratio for every change,
+so the design decision stays visible and reversible. Do not disable the contrast rule to keep a
+value.
+
+Two things to know before reading a failure here:
+
+- Accessibility is gating from Task 5 on (`a11y: { test: 'error' }` in `preview.tsx`), so an axe violation in a primitive is a red test. That is intended: fix the component, do not weaken the gate. If a rule genuinely cannot apply to an isolated primitive, disable that ONE rule at story level with a comment saying why, and report it.
+- If the FIRST storybook run fails with Vite's `unexpectedly reloaded a test` error, it is a stale optimizer cache, not your code: a cache warmed before the a11y annotations were composed. Re-run, or clear `apps/web/node_modules/.cache/storybook/`. CI is unaffected — `npm ci` wipes `node_modules`, so its cache is always cold.
 
 - [ ] **Step 4: Verify the boundary test still passes**
 
@@ -1345,9 +2023,50 @@ git commit -m "feat(web): text and layout primitives with stories"
 
 ### Task 10: Interactive primitives
 
+Amended 2026-09-09 after the first implementation, on two defects it found and deliberately left
+unfixed for a decision, plus one of this plan's own patterns that tested nothing.
+
+**A disabled `PillButton` with an `href` must not be operable.** The first version styled it with
+`pointer-events-none opacity-50` and still rendered a real `<a href>`, which stops the mouse and
+nothing else: Tab still reaches it and Enter still navigates. The fix is to stop rendering a link
+at all when disabled — return the `<button disabled>` branch regardless of `href`. That gives real
+disabled semantics, announced by screen readers, with no custom ARIA to get wrong. A story must
+exercise it, because the suite was green over this defect: no story rendered a disabled link.
+
+**`LangToggle`'s accessible name must be translated.** It was hardcoded English and read as
+"Switch to EN". `pt.json` gains `"Switch to English"` and `"Switch to Portuguese"` — two whole
+sentences rather than one interpolated key, which is the point of using English sentences as keys.
+The visible affordance stays the two-letter code.
+
+**Every focusable control needs a focus indicator that meets WCAG 2.2 SC 2.4.11.** The approved
+prototype styles text entry as `outline: none` plus a border-colour change on focus, and the first
+implementation reproduced that faithfully. Measured, it fails: the only change is the 1px border
+going `#1a1713` -> `#a63d20`, which is 2.81:1 against the unfocused state where 3:1 is required,
+and it is a hue-only signal. axe ships no rule for 2.4.11, so the gate is green over it — this is a
+defect the test suite cannot catch, and PR 3 builds the checkout forms on these controls. Give
+`TextInput`, `TextArea` and `Select` a real focus ring that meets 3:1, keeping the accent colour as
+the design intends, and report the before/after so the design change stays visible and reversible.
+
+**A prop with no visual affordance and no story is a prop that lies.** `TextInput` accepts
+`disabled` but styles nothing for it, so a disabled input is pixel-identical to an enabled one, and
+no story renders the combination, so axe never inspects it. This is the same hole that let the
+disabled `PillButton` ship operable. Give it the affordance its siblings have (`Stepper` uses
+`disabled:opacity-40`, `PillButton` `opacity-50`) and a story that renders it.
+
+**Do not use `useArgs` from `storybook/preview-api` for controlled-input stories.** Under the vitest
+browser project there is no manager to service `updateArgs`, so the value never changes. Hold the
+value in `useState` inside the story's `render` instead.
+
+Be precise about the symptom, because the first description of this in the plan was backwards and
+would have sent a PR 3 author hunting for the wrong thing. A `useArgs` story that types and then
+asserts the NEW value fails LOUDLY — `expect(element).toHaveValue('marina@example.com')` against an
+empty input — so it is a permanently red test, not a silently green one. The vacuous shape is the
+other one: a story that types and then asserts the value still equals the initial arg, which passes
+because nothing ever happened. Both are wrong; only the second is invisible.
+
 **Files:**
 - Create: `apps/web/src/ui/primitives/PillButton.tsx`, `FieldLabel.tsx`, `TextInput.tsx`, `TextArea.tsx`, `Select.tsx`, `Stepper.tsx`, `ImageFrame.tsx`, `LangToggle.tsx`, plus a `*.stories.tsx` beside each
-- Modify: `apps/web/src/ui/primitives/index.ts`
+- Modify: `apps/web/src/ui/primitives/index.ts`, `apps/web/src/copy/pt.json` (the two `LangToggle` keys only)
 
 **Interfaces:**
 - Produces:
@@ -1387,10 +2106,16 @@ const VARIANT = {
 /**
  * Links are real anchors so the browser's own affordances (middle-click, open in new tab,
  * copy link) keep working; the app root upgrades same-origin clicks to client-side routing.
+ *
+ * The `disabled` guard comes BEFORE the `href` check, and that order is the whole point. A
+ * disabled anchor is not a thing: `pointer-events-none` stops the mouse and nothing else, so Tab
+ * still reaches it and Enter still navigates. Dropping to a real `<button disabled>` is what makes
+ * it unreachable and unactivatable, and it announces itself as disabled with no custom ARIA to get
+ * wrong. A control that cannot be activated must not claim to be a link.
  */
 export function PillButton({ children, href, onClick, type = 'button', variant = 'solid', disabled, className = '' }: Props) {
   const classes = `${BASE} ${VARIANT[variant]} ${disabled ? 'pointer-events-none opacity-50' : ''} ${className}`
-  if (href) {
+  if (href && !disabled) {
     return (
       <a href={href} className={classes} onClick={onClick}>
         {children}
@@ -1410,12 +2135,18 @@ Create `apps/web/src/ui/primitives/FieldLabel.tsx`:
 ```tsx
 import type { ReactNode } from 'react'
 
+/**
+ * The hint's opacity MULTIPLIES with the label's: at `opacity-70` inside `opacity-75` the ink
+ * lands at an effective 0.525 over paper, which is 3.54:1 — below AA for 10px text. `opacity-85`
+ * (0.6375 effective, 5.05:1) is the smallest step that clears it; `opacity-80` still fails at
+ * 4.47:1. Any future change to the label's own opacity has to be re-checked against this.
+ */
 export function FieldLabel({ htmlFor, children, hint }: { htmlFor: string; children: ReactNode; hint?: string }) {
   return (
     <label htmlFor={htmlFor} className="font-mono flex flex-col gap-2 text-[10px] uppercase tracking-[0.16em] opacity-75">
       <span>
         {children}
-        {hint && <span className="ml-2 normal-case tracking-normal opacity-70">{hint}</span>}
+        {hint && <span className="ml-2 normal-case tracking-normal opacity-85">{hint}</span>}
       </span>
     </label>
   )
@@ -1425,6 +2156,9 @@ export function FieldLabel({ htmlFor, children, hint }: { htmlFor: string; child
 Create `apps/web/src/ui/primitives/TextInput.tsx`:
 
 ```tsx
+// `aria-errormessage` alone is not enough: axe's aria-valid-attr-value requires the referenced
+// message to ALSO use an announcement technique, so `aria-describedby` points at the same node.
+// Without it the error is painted but never spoken.
 interface Props {
   id: string
   value: string
@@ -1435,8 +2169,23 @@ interface Props {
   disabled?: boolean
 }
 
+/**
+ * The focus indicator is a real `outline`, not the prototype's border-colour swap. Measured in
+ * Chromium, that swap left `outline-style: none` and only moved the 1px border from #1a1713 to
+ * #a63d20 — a hue-only signal at 2.81:1 between the unfocused and focused states, where WCAG 2.2
+ * asks for 3:1. A 2px accent outline held 2px off the control paints on paper (#f4f0e6) at 5.58:1
+ * and changes the control's footprint as well as its colour, so it no longer relies on hue alone.
+ * axe ships no rule for this, so only the `FocusRing` story keeps it honest.
+ *
+ * `outline-none` is deliberately ABSENT rather than merely unnecessary. Tailwind 4 compiles it to
+ * `--tw-outline-style: none`, and the `outline-2` width utility resolves its style from that same
+ * variable — so leaving it in place would silently cancel the very ring it sits next to.
+ *
+ * `disabled:opacity-40` matches Stepper. It is the affordance this prop lacked entirely: without
+ * it a disabled field was pixel-identical to an enabled one.
+ */
 const FIELD =
-  'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] outline-none focus:border-accent'
+  'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
 
 export function TextInput({ id, value, onChange, type = 'text', placeholder, error, disabled }: Props) {
   return (
@@ -1449,6 +2198,7 @@ export function TextInput({ id, value, onChange, type = 'text', placeholder, err
         disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
         className={`${FIELD} ${error ? 'border-accent' : ''}`}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -1474,6 +2224,18 @@ interface Props {
   error?: string
 }
 
+/**
+ * The error wiring mirrors TextInput deliberately. A message that is only painted red is invisible
+ * to a screen reader: `aria-errormessage` names it, `aria-describedby` is the technique that gets
+ * it announced (axe's aria-valid-attr-value rejects the former without the latter), and the `<p>`
+ * carries the id both point at.
+ *
+ * The focus indicator mirrors TextInput too, and for the same measured reason: the border-colour
+ * swap alone was 2.81:1 between states with `outline-style: none`, under the 3:1 WCAG 2.2 asks
+ * for. The three text-entry controls share one ring — 2px accent, offset 2px, 5.58:1 on paper — so
+ * a form built out of them reads as one system. `outline-none` stays off the list on purpose:
+ * Tailwind 4 compiles it to `--tw-outline-style: none`, which the width utility would then inherit.
+ */
 export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: Props) {
   return (
     <>
@@ -1483,10 +2245,16 @@ export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: 
         value={value}
         placeholder={placeholder}
         aria-invalid={error ? true : undefined}
-        className={`font-mono border-ink w-full resize-y border bg-transparent px-3 py-3 text-[13px] leading-relaxed outline-none focus:border-accent ${error ? 'border-accent' : ''}`}
+        aria-errormessage={error ? `${id}-error` : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        className={`font-mono border-ink w-full resize-y border bg-transparent px-3 py-3 text-[13px] leading-relaxed focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent ${error ? 'border-accent' : ''}`}
         onChange={(e) => onChange(e.target.value)}
       />
-      {error && <p className="font-mono text-accent mt-1 text-[11px]">{error}</p>}
+      {error && (
+        <p id={`${id}-error`} className="font-mono text-accent mt-1 text-[11px]">
+          {error}
+        </p>
+      )}
     </>
   )
 }
@@ -1502,12 +2270,18 @@ interface Props {
   options: { value: string; label: string }[]
 }
 
+/**
+ * Same focus ring as TextInput and TextArea — 2px accent, offset 2px, 5.58:1 against paper —
+ * because a checkout form mixes all three and a focus indicator that changes shape between
+ * controls is a worse signal than one that does not. See TextInput for the measurement and for
+ * why `outline-none` must not come back.
+ */
 export function Select({ id, value, onChange, options }: Props) {
   return (
     <select
       id={id}
       value={value}
-      className="font-mono border-ink w-full border bg-transparent px-3 py-3 text-[13px] outline-none focus:border-accent"
+      className="font-mono border-ink w-full border bg-transparent px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent"
       onChange={(e) => onChange(e.target.value)}
     >
       {options.map((o) => (
@@ -1572,7 +2346,11 @@ interface Props {
   placeholder?: string
 }
 
-/** Product photography slot: keeps the prototype's aspect ratios and degrades to paper. */
+/**
+ * Product photography slot: keeps the prototype's aspect ratios and degrades to paper.
+ * The placeholder sits at `opacity-65` (5.13:1 on paper-2), not the lighter grey the eye wants
+ * here — it is real text on a real background, so it is held to AA like any other copy.
+ */
 export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
   const { t } = useTranslation()
   return (
@@ -1580,7 +2358,7 @@ export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
       {src ? (
         <img src={src} alt={alt} className="h-full w-full object-cover" />
       ) : (
-        <div className="font-mono absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] uppercase tracking-[0.14em] opacity-40">
+        <div className="font-mono absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] uppercase tracking-[0.14em] opacity-65">
           {placeholder ?? t('No photo yet')}
         </div>
       )}
@@ -1592,13 +2370,22 @@ export function ImageFrame({ src, alt, ratio = '4/5', placeholder }: Props) {
 Create `apps/web/src/ui/primitives/LangToggle.tsx`:
 
 ```tsx
+import { useTranslation } from 'react-i18next'
+
+/**
+ * Two whole sentences as keys rather than one interpolated `Switch to {{lang}}`: the language
+ * name has to decline with the sentence around it, and an interpolated key would have shipped
+ * "Mudar para English". The visible affordance stays the bare two-letter code — it is the target
+ * language, not a word to translate — so only the accessible name is language-aware.
+ */
 export function LangToggle({ lang, onToggle }: { lang: 'pt' | 'en'; onToggle: () => void }) {
+  const { t } = useTranslation()
   const next = lang === 'pt' ? 'en' : 'pt'
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-label={`Switch to ${next.toUpperCase()}`}
+      aria-label={next === 'en' ? t('Switch to English') : t('Switch to Portuguese')}
       className="font-mono text-[12px] uppercase tracking-[0.1em] underline underline-offset-4"
     >
       {next}
@@ -1645,6 +2432,29 @@ export const Disabled: Story = {
     await expect(canvas.getByRole('button', { name: 'Esgotado' })).toBeDisabled()
   },
 }
+
+// The story whose absence let a real defect ship green. `href` + `disabled` was never rendered by
+// any story, so axe never saw it and no play exercised it: the first implementation kept a real
+// `<a href>` and only added `pointer-events-none`, which stops the mouse and nothing else — Tab
+// reached it and Enter navigated. Everything below is about ONE property: disabled means inert.
+export const DisabledLink: Story = {
+  args: { children: 'Esgotado', href: '/', disabled: true },
+  play: async ({ canvas, args }) => {
+    const control = canvas.getByText('Esgotado')
+
+    // Unreachable by keyboard...
+    await userEvent.tab()
+    await expect(control).not.toHaveFocus()
+
+    // ...so it cannot be activated...
+    await userEvent.keyboard('{Enter}')
+    await expect(args.onClick).not.toHaveBeenCalled()
+
+    // ...and it does not advertise itself as a link it refuses to behave like.
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(control).toBeDisabled()
+  },
+}
 ```
 
 Create `apps/web/src/ui/primitives/Stepper.stories.tsx`:
@@ -1674,21 +2484,48 @@ export const Default: Story = {
 export const Disabled: Story = { args: { disabled: true } }
 ```
 
-Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useArgs` so typing works):
+Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useState` inside `render` — see the amendment note: `useArgs` never updates under the vitest browser project, so a typing story built on it can only ever be red):
 
 ```tsx
+import { type ComponentProps, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useArgs } from 'storybook/preview-api'
-import { expect, userEvent } from 'storybook/test'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
 import { TextInput } from './TextInput'
+
+const LABEL = 'E-mail'
 
 const meta = {
   component: TextInput,
   title: 'Primitives/TextInput',
-  args: { id: 'email', value: '' },
-  render: function Render(args) {
-    const [{ value }, updateArgs] = useArgs()
-    return <TextInput {...args} value={value} onChange={(v) => updateArgs({ value: v })} />
+  // `onChange` is required on the component, so it MUST be declared here: `StoryObj<typeof meta>`
+  // only makes an arg optional once meta supplies a default, and without it every story owes an
+  // `onChange` it never passes.
+  args: { id: 'email', value: '', onChange: fn() },
+  // Local state, NOT `useArgs`: under the vitest storybook project there is no manager to service
+  // the UPDATE_STORY_ARGS message, so `updateArgs` never re-renders and a controlled input stays
+  // frozen at its initial value — the typing assertion below silently tested nothing.
+  //
+  // The render parameter is annotated rather than inferred because the base tsconfig sets
+  // `declaration: true`: tsc must be able to NAME this type, and `Props` is not exported (TS4023).
+  //
+  // The FieldLabel is part of the story because it is part of the contract — TextInput does not
+  // name itself, and an unlabelled field fails axe's `label` rule.
+  render: function Render(args: ComponentProps<typeof TextInput>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <TextInput
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
   },
 } satisfies Meta<typeof TextInput>
 export default meta
@@ -1709,9 +2546,452 @@ export const WithError: Story = {
     await expect(canvas.getByText('E-mail inválido')).toBeInTheDocument()
   },
 }
+
+// The error is only useful if a screen reader reaches it. `toHaveAccessibleErrorMessage` resolves
+// aria-errormessage the way an AT would, so this fails if the id wiring or the announcement
+// technique regresses — neither of which the visual assertion above would notice.
+export const ErrorIsAnnounced: Story = {
+  args: { value: 'nope', error: 'E-mail inválido' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('E-mail inválido')
+  },
+}
+
+// WCAG relative luminance, inline and deliberately. The assertion below has to be about a NUMBER:
+// "an outline exists" would happily pass the 1px hue-only signal this story was written to keep
+// out, and axe ships no rule for focus appearance, so nothing else in the suite is watching.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// The regression this exists to catch: the first implementation styled focus as
+// `outline-none focus:border-accent`, which left `outline-style: none` and moved only the 1px
+// border — 2.81:1 between states, under the 3:1 WCAG 2.2 asks for, and hue-only. Asserting the
+// outline is really painted AND that its colour clears 3:1 against the background MEASURED behind
+// it fails the moment either half is walked back, including by re-adding `outline-none` (Tailwind
+// 4 turns that into `--tw-outline-style: none`, which the width utility then resolves to).
+export const FocusRing: Story = {
+  args: { placeholder: 'E-mail' },
+  play: async ({ canvas }) => {
+    const input = canvas.getByPlaceholderText('E-mail')
+
+    input.blur()
+    const unfocused = getComputedStyle(input).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    input.focus()
+    const focused = getComputedStyle(input)
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = focused
+
+    await expect(input).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(input))).toBeGreaterThanOrEqual(3)
+  },
+}
+
+// `disabled` used to be a prop that lied: the component accepted it, `FIELD` styled nothing for
+// it, and no story rendered the combination — so a disabled field was pixel-identical to an
+// enabled one and axe never even looked at one. Asserting the computed opacity, not just the
+// attribute, is what makes the affordance itself non-optional.
+export const Disabled: Story = {
+  args: { value: 'marina@example.com', disabled: true },
+  play: async ({ canvas }) => {
+    const input = canvas.getByLabelText(LABEL)
+    await expect(input).toBeDisabled()
+    await expect(parseFloat(getComputedStyle(input).opacity)).toBeLessThan(1)
+  },
+}
 ```
 
 Create stories for `FieldLabel`, `TextArea`, `Select`, `ImageFrame` and `LangToggle` in the same shape: a `Default` story for each, plus `Select` asserting `onChange` fires with the chosen value via `userEvent.selectOptions`, `ImageFrame` with a `NoPhoto` story asserting the placeholder text renders, and `LangToggle` asserting `onToggle` fires. Keep every `play` to one behaviour.
+
+Create `apps/web/src/ui/primitives/FieldLabel.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { TextInput } from './TextInput'
+
+// The label is rendered with the control it names. On its own it would prove nothing: `htmlFor`
+// is the whole contract of this primitive, and only a real control with the matching `id` shows
+// the association actually resolves.
+const meta = {
+  component: FieldLabel,
+  title: 'Primitives/FieldLabel',
+  args: { htmlFor: 'recipient', children: 'Nome de quem recebe' },
+  render: (args) => (
+    <div className="flex max-w-xs flex-col gap-2">
+      <FieldLabel {...args} />
+      <TextInput id={args.htmlFor} value="" onChange={() => {}} />
+    </div>
+  ),
+} satisfies Meta<typeof FieldLabel>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('Nome de quem recebe')).toBeInTheDocument()
+  },
+}
+
+export const WithHint: Story = {
+  args: { hint: '(opcional)' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('(opcional)')).toBeInTheDocument()
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/TextArea.stories.tsx`:
+
+```tsx
+import { type ComponentProps, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { TextArea } from './TextArea'
+
+const LABEL = 'Mensagem no cartão'
+
+const meta = {
+  component: TextArea,
+  title: 'Primitives/TextArea',
+  args: { id: 'note', value: '', onChange: fn() },
+  render: function Render(args: ComponentProps<typeof TextArea>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <TextArea
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
+  },
+} satisfies Meta<typeof TextArea>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  args: { placeholder: 'Mensagem no cartão' },
+  play: async ({ canvas }) => {
+    const field = canvas.getByPlaceholderText('Mensagem no cartão')
+    await userEvent.type(field, 'Feliz aniversário')
+    await expect(field).toHaveValue('Feliz aniversário')
+  },
+}
+
+export const WithError: Story = {
+  args: { value: '', error: 'Escreva a mensagem' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('Escreva a mensagem')
+  },
+}
+
+// WCAG relative luminance, inline and deliberately — the same arithmetic TextInput's FocusRing
+// story carries. The assertion has to be about a NUMBER: "an outline exists" would happily pass
+// the 1px hue-only signal this story exists to keep out. The helpers are duplicated rather than
+// shared because a CSF file cannot export a non-story without Storybook trying to render it.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// The regression this exists to catch is the one TextInput already guards: the first
+// implementation styled focus as `outline-none focus:border-accent`, which left
+// `outline-style: none` and moved only the 1px border — 2.81:1 between states, under the 3:1 WCAG
+// 2.2 SC 2.4.11 asks for, and hue-only. TextArea shares that ring, so it needs its own guard:
+// the shared FIELD string is not shared code, it is three copies, and a fix applied to one of
+// them is not applied to the others. Asserting the outline is really painted AND that its colour
+// clears 3:1 against the background MEASURED behind it fails the moment either half is walked
+// back, including by re-adding `outline-none` (Tailwind 4 turns that into
+// `--tw-outline-style: none`, which the width utility then resolves to).
+export const FocusRing: Story = {
+  play: async ({ canvas }) => {
+    const field = canvas.getByLabelText(LABEL)
+
+    field.blur()
+    const unfocused = getComputedStyle(field).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    field.focus()
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = getComputedStyle(field)
+
+    await expect(field).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(field))).toBeGreaterThanOrEqual(3)
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/Select.stories.tsx`:
+
+```tsx
+import { type ComponentProps, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { Select } from './Select'
+
+const LABEL = 'Forma de envio'
+
+const OPTIONS = [
+  { value: 'sedex', label: 'Sedex' },
+  { value: 'pac', label: 'PAC' },
+  { value: 'retirada', label: 'Retirada' },
+]
+
+const meta = {
+  component: Select,
+  title: 'Primitives/Select',
+  args: { id: 'shipping', value: 'sedex', options: OPTIONS, onChange: fn() },
+  // Local state keeps the controlled select honest — React snaps the DOM value back otherwise —
+  // while `args.onChange` stays a spy, so the story can assert which value was picked.
+  render: function Render(args: ComponentProps<typeof Select>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <Select
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
+  },
+} satisfies Meta<typeof Select>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  play: async ({ canvas, args }) => {
+    await userEvent.selectOptions(canvas.getByLabelText(LABEL), 'pac')
+    await expect(args.onChange).toHaveBeenCalledWith('pac')
+  },
+}
+
+// WCAG relative luminance, inline and deliberately — the same arithmetic TextInput's FocusRing
+// story carries. The assertion has to be about a NUMBER: "an outline exists" would happily pass
+// the 1px hue-only signal this story exists to keep out. The helpers are duplicated rather than
+// shared because a CSF file cannot export a non-story without Storybook trying to render it.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// Same guard as TextInput and TextArea, and NOT assumed to behave the same: this is a native
+// `<select>` with `appearance: auto`, which ships a UA focus ring of its own, so whether the
+// authored outline actually wins had to be measured rather than inferred. Measured in headless
+// Chromium: unfocused reports `outline-style: none` at the UA's inert 3px, focused reports
+// `rgb(166, 61, 32) solid 2px` at offset 2px — the authored ring paints, the UA one does not
+// come back.
+//
+// The regression it catches is the shared one: focus styled as `outline-none focus:border-accent`
+// left `outline-style: none` and moved only the 1px border — 2.81:1 between states, under the 3:1
+// WCAG 2.2 SC 2.4.11 asks for, and hue-only. The three controls repeat the utility string rather
+// than sharing it, so each one needs its own guard.
+export const FocusRing: Story = {
+  play: async ({ canvas }) => {
+    const select = canvas.getByLabelText(LABEL)
+
+    select.blur()
+    const unfocused = getComputedStyle(select).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    select.focus()
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = getComputedStyle(select)
+
+    await expect(select).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(select))).toBeGreaterThanOrEqual(3)
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/ImageFrame.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect } from 'storybook/test'
+import { ImageFrame } from './ImageFrame'
+
+// An inline data URI, not a file or a remote URL: the browser project must not depend on the
+// network or on an asset pipeline to decide whether this story passes.
+const SWATCH = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="100"><rect width="80" height="100" fill="#c9bfa6"/></svg>',
+)}`
+
+const meta = {
+  component: ImageFrame,
+  title: 'Primitives/ImageFrame',
+  args: { alt: 'Foto do vaso Cerrado' },
+  decorators: [
+    (Story) => (
+      <div className="w-60">
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Meta<typeof ImageFrame>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  args: { src: SWATCH },
+  play: async ({ canvas, args }) => {
+    await expect(canvas.getByRole('img', { name: args.alt })).toBeInTheDocument()
+  },
+}
+
+export const NoPhoto: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('Ainda sem foto')).toBeInTheDocument()
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/LangToggle.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { LangToggle } from './LangToggle'
+
+const meta = {
+  component: LangToggle,
+  title: 'Primitives/LangToggle',
+  args: { lang: 'pt', onToggle: fn() },
+} satisfies Meta<typeof LangToggle>
+export default meta
+type Story = StoryObj<typeof meta>
+
+// Queried by the TRANSLATED accessible name, which is the assertion that matters: the name used
+// to be a hardcoded "Switch to EN" and a Portuguese reader heard English. Finding the button by
+// its pt-BR name fails if the translation regresses or the key is dropped from pt.json.
+export const FromPortuguese: Story = {
+  play: async ({ canvas, args }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Mudar para inglês' }))
+    await expect(args.onToggle).toHaveBeenCalledTimes(1)
+  },
+}
+
+// The visible affordance stays the bare two-letter code even though the accessible name is a
+// full sentence — the code is the target language, not a word to translate.
+export const FromEnglish: Story = {
+  args: { lang: 'en' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('button', { name: 'Mudar para português' })).toHaveTextContent('pt')
+  },
+}
+```
 
 - [ ] **Step 3: Run both projects**
 
@@ -1791,3 +3071,288 @@ git commit -m "ci: install chromium and build storybook in the test job"
 - **Deferred to PR 3:** `LinkInterceptor`, the `app/` layer (containers, `useCart`, `useLang`, query hooks), shop and admin compound components, pages, and the `t()`-literal completeness scan.
 - **Type consistency:** `PublicProduct`, `AdminOrder`, `PublicOrder`, `CheckoutRequest`, `FieldErrors`, `TotalsLine`, `OrderStatus`, `formatPrice`, `ORDER_STATUSES` are used with the names `@shop/shared` actually exports (verified against `packages/shared/dist/index.d.ts`); `Lang` is `'pt' | 'en'` everywhere, matching `formatPrice`'s signature.
 - **Known risk, called out in the tasks:** three Storybook 10 API details (`setProjectAnnotations` entry point, `storybook/test` vs `@storybook/test`, `initialGlobals` vs `globalTypes.defaultValue`) have a stated fallback and a "report what you used" instruction rather than a silent guess.
+
+---
+
+## Closing wave (after the whole-branch review)
+
+Four commits landed after Task 11, from findings a per-task review structurally could not see. They
+are recorded here so the plan describes the branch that actually shipped.
+
+- `936a7ae` — **the anchor guard the spec required and this plan never mentioned.** spec:181 and
+  spec:227 both call for a preview decorator that `preventDefault()`s same-origin anchor clicks and
+  reports `action('navigate')(href)`. Task 5 rewrote `preview.tsx` and the clause fell between the
+  two tasks. Nothing was red, because the only anchor story asserted the `href` attribute instead of
+  clicking it — but the spec's own PR 3 play list has a story that clicks an order row, and a
+  `userEvent.click` on a real `<a href>` in the vitest browser project navigates the test page out
+  from under the runner. `action` lives at `storybook/actions` in Storybook 10.6 (verified against
+  the package exports map; `storybook/test` exports no `action`).
+- `349b845` — three more assertions that could not fail. `expect(contrast(outlineColor, PAPER))` sat
+  two lines after `expect(outlineColor).toBe(ACCENT)` with both colours as file-local literals, so
+  the contrast check was arithmetic over two constants and could only run when it was guaranteed to
+  pass. Contrast is now measured against the wrapper background read from the DOM, and the hue pin
+  that short-circuited it is gone. Two redundant fixture assertions collapsed into the exact-key
+  ones that already carried the load.
+- `e8bef75` — the copy-completeness scan named at spec:177, which did not exist. With
+  `fallbackLng: false` and English-sentence keys, a `t()` whose key is missing from `pt.json` renders
+  the English sentence to a Portuguese reader silently. Result: no missing keys; seven of seventeen
+  keys unused, six of them deliberately planted for PR 3 and `"Photo of {{name}}"` genuinely dead,
+  since `ImageFrame` takes `alt` as a prop. Nothing was added or deleted to make the test pass.
+- `40334ab` — one story with `globals: { locale: 'en' }`. The toolbar shipped a pt/en switch that no
+  test ever exercised, so the per-locale instance path never ran in CI and a developer flipping the
+  toolbar would have watched six stories fail in the interactions panel.
+
+The two files below are shown in their final form because the plan's earlier blocks for them are
+intermediate states, correct for the step that produced them: `preview.tsx` is built up across
+Tasks 1, 2 and 5, and `primitives/index.ts` grows from Task 9 to Task 10.
+
+Final `apps/web/.storybook/preview.tsx`:
+
+```tsx
+import type { MouseEvent, ReactNode } from 'react'
+import type { Preview } from '@storybook/react-vite'
+import { action } from 'storybook/actions'
+import { I18nextProvider } from 'react-i18next'
+import { type Lang, createCopyInstance } from '../src/copy/i18n'
+import '../src/index.css'
+
+// One initialised instance per language, created on first use. Swapping instances instead of
+// mutating a shared one means a story paints in the right language on its FIRST frame (an effect
+// would only fix it on the second) and no story can leak a language into the story after it.
+// `init()` completes synchronously here because the resources are inline and there is no backend
+// or async detector; if either is ever added, this has to be awaited before the first render.
+const instances = new Map<Lang, ReturnType<typeof createCopyInstance>>()
+
+function copyFor(locale: Lang) {
+  let instance = instances.get(locale)
+  if (!instance) {
+    instance = createCopyInstance(locale)
+    void instance.init()
+    instances.set(locale, instance)
+  }
+  return instance
+}
+
+// Storybook renders stories in its own iframe, so the fonts the app loads from index.html have
+// to be requested here as well.
+const fonts = document.createElement('link')
+fonts.rel = 'stylesheet'
+fonts.href =
+  'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,300;6..72,400&display=swap'
+document.head.appendChild(fonts)
+
+// Storybook has no router, so a real `<a href>` in a story is a live link. In the preview iframe a
+// click leaves the story; under the vitest browser project it navigates the RUNNER's own page out
+// from under itself, which is a hang or a torn-down suite rather than a red assertion. The spec
+// (line 181) makes this a global decorator, and it mirrors `LinkInterceptor`'s rule exactly: only
+// the click the router would own is cancelled — primary button, no modifier key, same origin, no
+// `target`, no `download`. Everything else falls through untouched, so cmd-click, middle-click,
+// "open in new tab", downloads, `mailto:` and external links keep their native behaviour.
+const navigate = action('navigate')
+
+function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  if (!(event.target instanceof Element)) return null
+  const anchor = event.target.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
+  // context, which is the browser's job and not the router's.
+  const target = anchor.getAttribute('target')
+  if (target && target !== '_self') return null
+  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
+  // non-HTTP scheme (`mailto:`, `tel:`) serialises to "null" and falls through on this line.
+  if (anchor.origin !== window.location.origin) return null
+  return anchor
+}
+
+function AnchorGuard({ children }: { children: ReactNode }) {
+  return (
+    // Capture phase, like the app's interceptor: the decision is made before any handler inside
+    // the story can see the click, so a component's own onClick still runs and still sees a
+    // cancelled event.
+    <div
+      onClickCapture={(event) => {
+        const anchor = interceptableAnchor(event)
+        if (!anchor) return
+        event.preventDefault()
+        // The same string `LinkInterceptor` hands to `navigate()`, so the actions panel shows the
+        // route the app would take rather than the raw (possibly relative) attribute.
+        navigate(anchor.pathname + anchor.search + anchor.hash)
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+const preview: Preview = {
+  parameters: {
+    controls: { expanded: true },
+    backgrounds: { disable: true },
+    // The a11y addon ships `test: 'todo'`, which reports violations in the panel but never fails
+    // a run. Wiring the addon into the vitest project is only half the job; this is the half that
+    // makes an axe violation a red test.
+    a11y: { test: 'error' },
+  },
+  globalTypes: {
+    locale: {
+      description: 'Copy language',
+      toolbar: {
+        icon: 'globe',
+        items: [
+          { value: 'pt', title: 'Português' },
+          { value: 'en', title: 'English' },
+        ],
+        dynamicTitle: true,
+      },
+    },
+  },
+  initialGlobals: { locale: 'pt' },
+  decorators: [
+    (Story, context) => {
+      const locale = (context.globals.locale as Lang) ?? 'pt'
+      return (
+        <I18nextProvider i18n={copyFor(locale)} defaultNS="translation">
+          <div className="bg-paper text-ink font-body p-6">
+            <Story />
+          </div>
+        </I18nextProvider>
+      )
+    },
+    (Story) => (
+      <AnchorGuard>
+        <Story />
+      </AnchorGuard>
+    ),
+  ],
+}
+
+export default preview
+```
+
+Final `apps/web/src/ui/primitives/index.ts`:
+
+```ts
+export * from './Eyebrow'
+export * from './FieldLabel'
+export * from './ImageFrame'
+export * from './LangToggle'
+export * from './PillButton'
+export * from './Price'
+export * from './RuledList'
+export * from './Select'
+export * from './Stat'
+export * from './StatusPill'
+export * from './Stepper'
+export * from './TextArea'
+export * from './TextInput'
+```
+
+Final `apps/web/src/ui/primitives/AnchorGuard.stories.tsx`:
+
+```tsx
+import { type ReactNode, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, userEvent } from 'storybook/test'
+
+// These stories test the PREVIEW DECORATOR, not a primitive — but every real `<a href>` in the UI
+// layer is rendered by a primitive, and the trap the decorator exists to defuse (a `userEvent.click`
+// on a live link navigating the vitest runner's own page) is sprung from a story file. The file
+// lives beside the components it protects for that reason.
+//
+// The harness reads `defaultPrevented` in the BUBBLE phase, which is the ground truth of the whole
+// feature: the preview's guard runs in the capture phase, so by the time this handler sees the
+// click the browser's decision has already been made, and this flag IS whether the page navigates.
+
+type Outcome = 'intercepted' | 'fell through'
+
+function Harness({ children }: { children: ReactNode }) {
+  const [log, setLog] = useState<string[]>([])
+  return (
+    <div
+      className="flex flex-col items-start gap-2"
+      onClick={(event) => {
+        const label = event.target instanceof HTMLElement ? (event.target.textContent ?? '?') : '?'
+        const outcome: Outcome = event.nativeEvent.defaultPrevented ? 'intercepted' : 'fell through'
+        setLog((entries) => [...entries, `${label}=${outcome}`])
+        // The net, and it is deliberate: a fall-through case really would navigate, and under the
+        // vitest browser project navigating means the runner loses the page it is testing in — a
+        // hang, not a red test. Recording the flag first and cancelling second keeps the failure
+        // mode an assertion.
+        event.preventDefault()
+      }}
+    >
+      {children}
+      <output data-testid="log" className="font-mono text-[11px]">
+        {log.join(' | ')}
+      </output>
+    </div>
+  )
+}
+
+const meta: Meta = { title: 'Storybook/Anchor guard' }
+export default meta
+type Story = StoryObj
+
+const HREF = '/exhibit/carta-de-marina?from=story#specs'
+
+export const SameOriginClickIsIntercepted: Story = {
+  render: () => (
+    <Harness>
+      <a href={HREF} className="underline">
+        same-origin
+      </a>
+    </Harness>
+  ),
+  play: async ({ canvas }) => {
+    const link = canvas.getByRole('link', { name: 'same-origin' })
+    await userEvent.click(link)
+
+    // The load-bearing half: the guard cancelled the click, which is what stops the navigation.
+    await expect(canvas.getByTestId('log')).toHaveTextContent('same-origin=intercepted')
+    // And the story is still the thing on screen — nothing replaced it.
+    await expect(link).toBeInTheDocument()
+  },
+}
+
+// Every case the browser owns, in one story. Each of these would be a bug if the guard swallowed
+// it: cmd-click and "open in new tab" are how people open a second product, `download` is how a
+// file is saved, and `mailto:` is the only way to reach Augusto in the whole design.
+export const BrowserOwnedClicksFallThrough: Story = {
+  render: () => (
+    <Harness>
+      <a href={HREF} className="underline">
+        modifier
+      </a>
+      <a href={HREF} target="_blank" rel="noreferrer" className="underline">
+        new-tab
+      </a>
+      <a href="/catalogo.pdf" download className="underline">
+        download
+      </a>
+      <a href="https://example.com/shop" rel="noreferrer" className="underline">
+        external
+      </a>
+      <a href="mailto:contato@augustoamaral.com" className="underline">
+        mailto
+      </a>
+    </Harness>
+  ),
+  play: async ({ canvas }) => {
+    // A session rather than the bare `userEvent.click`: the direct API resets keyboard state
+    // between calls, so the held Meta key has to live in one session to reach the click.
+    const user = userEvent.setup()
+    await user.keyboard('{Meta>}')
+    await user.click(canvas.getByRole('link', { name: 'modifier' }))
+    await user.keyboard('{/Meta}')
+
+    for (const name of ['new-tab', 'download', 'external', 'mailto']) {
+      await user.click(canvas.getByRole('link', { name }))
+    }
+
+    await expect(canvas.getByTestId('log')).toHaveTextContent(
+      'modifier=fell through | new-tab=fell through | download=fell through | external=fell through | mailto=fell through',
+    )
+  },
+}
+```
