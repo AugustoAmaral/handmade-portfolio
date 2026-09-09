@@ -878,11 +878,28 @@ Amended 2026-09-09 after the first implementation, on three defects it surfaced 
 Create `apps/web/test/fixtures.test.ts`:
 
 ```ts
-import { checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
+import { ORDER_STATUSES, SHIPPING_METHODS, checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
 import { describe, expect, it } from 'vitest'
-import { brCheckout, cartLines, digitalCheckout, intlCheckout } from '../src/fixtures/checkout'
-import { adminOrders } from '../src/fixtures/orders'
-import { products } from '../src/fixtures/products'
+import {
+  brCheckout,
+  brCheckoutErrors,
+  buyerCheckoutErrors,
+  cartLines,
+  digitalCheckout,
+  intlCheckout,
+} from '../src/fixtures/checkout'
+import { adminOrders, paidOrder, publicPaidOrder, publicPendingOrder } from '../src/fixtures/orders'
+import {
+  digitalLetter,
+  drawing,
+  inactiveGuide,
+  letter,
+  productWithoutPhotos,
+  products,
+  soldOutDrawing,
+} from '../src/fixtures/products'
+
+const allProducts = [letter, drawing, soldOutDrawing, digitalLetter, inactiveGuide, productWithoutPhotos]
 
 describe('fixtures', () => {
   it('ships four active products, one of them featured and one sold out', () => {
@@ -890,6 +907,16 @@ describe('fixtures', () => {
     expect(products.every((p) => p.active)).toBe(true)
     expect(products.filter((p) => p.featured)).toHaveLength(1)
     expect(products.some((p) => p.stock === 0)).toBe(true)
+  })
+
+  it('gives every product its own description and specs', () => {
+    // Most of these are built by spreading another product, which used to leak the parent's prose
+    // (the pencil portrait described itself as an India ink drawing) and its specs array by
+    // reference. Both halves are checked: distinct text, and distinct array identities.
+    expect(new Set(allProducts.map((p) => p.description.pt)).size).toBe(allProducts.length)
+    expect(new Set(allProducts.map((p) => p.description.en)).size).toBe(allProducts.length)
+    const specs = allProducts.map((p) => p.specs).filter((s) => s.length > 0)
+    expect(new Set(specs).size).toBe(specs.length)
   })
 
   it('offers physical checkout values the real schema and rules accept', () => {
@@ -903,23 +930,65 @@ describe('fixtures', () => {
 
   it('offers a digital checkout that needs no address', () => {
     const parsed = checkoutRequestSchema.parse(digitalCheckout)
+    expect(parsed.items.map((i) => i.slug)).toEqual([digitalLetter.slug])
     expect(parsed.shippingAddress).toBeUndefined()
     expect(parsed.shippingMethod).toBeUndefined()
-    expect(computeTotals([{ priceCents: parsed.items[0]!.qty * 4500, qty: 1, type: 'digital' }], undefined).shippingCents).toBe(0)
+    // Priced WITH a shipping method selected, deliberately. `computeTotals` short-circuits to zero
+    // shipping when the method is null, so passing null here would hold for a physical cart too.
+    // Passing 'sedex' means the zero can only come from `hasPhysicalItems` being false.
+    // `type` comes from the product, not a hard-coded 'digital': that is what makes this assert
+    // something about the FIXTURE rather than about the literal typed on the line below.
+    const lines = parsed.items.map((i) => ({ priceCents: digitalLetter.priceCents, qty: i.qty, type: digitalLetter.type }))
+    expect(computeTotals(lines, 'sedex')).toEqual({
+      itemsCents: digitalLetter.priceCents,
+      shippingCents: 0,
+      totalCents: digitalLetter.priceCents,
+    })
   })
 
   it('has cart lines whose totals match the paid order', () => {
     // Anchored on independent numbers: `totalCents === itemsCents + shippingCents` is true by
     // construction of computeTotals and would hold for any cart at all.
     const totals = computeTotals(cartLines, 'sedex')
-    expect(totals).toEqual(paidOrder.amounts)
-    expect(totals.totalCents).toBe(publicPaidOrder.totalCents)
+    expect(totals).toEqual({
+      itemsCents: paidOrder.amounts.itemsCents,
+      shippingCents: paidOrder.amounts.shippingCents,
+      totalCents: paidOrder.amounts.totalCents,
+    })
+    expect(publicPaidOrder.totalCents).toBe(totals.totalCents)
+    expect(publicPaidOrder.eta).toEqual(SHIPPING_METHODS.sedex.eta)
+    expect(publicPendingOrder.eta).toEqual(SHIPPING_METHODS.pac.eta)
   })
 
   it('covers every admin order status', () => {
     // Derived from the shared union, so a sixth state added upstream fails here instead of
     // silently going unrendered by every story.
     expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(ORDER_STATUSES))
+  })
+
+  it('prices every admin order with the real shipping table', () => {
+    for (const order of adminOrders) {
+      const lines = order.items.map((i) => ({ priceCents: i.unitAmountCents, qty: i.qty, type: 'physical' as const }))
+      expect({ id: order.id, ...computeTotals(lines, order.shippingMethod) }).toEqual({
+        id: order.id,
+        itemsCents: order.amounts.itemsCents,
+        shippingCents: order.amounts.shippingCents,
+        totalCents: order.amounts.totalCents,
+      })
+    }
+  })
+
+  it('keeps every order timeline ordered and every Stripe session unique', () => {
+    // Orders are built by spreading `paidOrder`, which used to carry its `paidAt` and its
+    // `stripeSessionId` into orders that then overrode only `createdAt`: one shipped four days
+    // before it was paid, another was paid before it existed, and three shared one Stripe session.
+    for (const o of adminOrders) {
+      const stamps = [o.createdAt, o.paidAt, o.shippedAt].filter((s): s is string => s != null)
+      expect({ id: o.id, stamps }).toEqual({ id: o.id, stamps: [...stamps].sort() })
+    }
+    const sessions = adminOrders.map((o) => o.stripeSessionId).filter((s): s is string => s != null)
+    expect(sessions.length).toBeGreaterThan(1)
+    expect(new Set(sessions).size).toBe(sessions.length)
   })
 
   it('exposes the checkout errors the API can really send', () => {
@@ -933,6 +1002,7 @@ describe('fixtures', () => {
     // The rules never key on the buyer; a buyer error arrives from the zod path instead, in its
     // own response, which is what `buyerCheckoutErrors` is for.
     expect(Object.keys(brCheckoutErrors).filter((k) => k.startsWith('buyer'))).toEqual([])
+    expect(Object.keys(buyerCheckoutErrors).sort()).toEqual(['buyer.email', 'buyer.name'])
     expect(Object.keys(buyerCheckoutErrors).every((k) => k.startsWith('buyer'))).toBe(true)
   })
 
@@ -940,6 +1010,14 @@ describe('fixtures', () => {
     expect(() => {
       ;(letter.specs as unknown as unknown[]).push({})
     }).toThrow()
+    expect(() => {
+      ;(paidOrder.shippingAddress as unknown as Record<string, string>).city = 'Nowhere'
+    }).toThrow()
+    // Spreading a frozen fixture to override a field still works — that is how stories vary them.
+    const varied = { ...letter, priceCents: 999, name: { pt: 'Outra', en: 'Other' } }
+    expect(varied.priceCents).toBe(999)
+    expect(varied.slug).toBe(letter.slug)
+    expect(letter.priceCents).toBe(4500)
   })
 })
 ```
@@ -987,9 +1065,12 @@ Create `apps/web/src/fixtures/products.ts`:
 
 ```ts
 import type { PublicProduct } from '@shop/shared'
+import { deepFreeze } from './freeze'
 
 // Sample data for stories and tests. Content mirrors the approved prototype's catalogue.
-export const letter: PublicProduct = {
+// Every product carries its OWN description and specs: several are built by spreading another
+// product, and inheriting the parent's prose put the wrong copy on the wrong product page.
+export const letter: PublicProduct = deepFreeze({
   id: 'p-letter',
   slug: 'carta-escrita',
   name: { pt: 'Carta escrita à mão', en: 'Handwritten letter' },
@@ -1012,9 +1093,9 @@ export const letter: PublicProduct = {
   ],
   featured: true,
   active: true,
-}
+})
 
-export const drawing: PublicProduct = {
+export const drawing: PublicProduct = deepFreeze({
   id: 'p-drawing',
   slug: 'desenho-nanquim',
   name: { pt: 'Desenho a nanquim', en: 'India ink drawing' },
@@ -1032,20 +1113,29 @@ export const drawing: PublicProduct = {
   ],
   featured: false,
   active: true,
-}
+})
 
-export const soldOutDrawing: PublicProduct = {
+export const soldOutDrawing: PublicProduct = deepFreeze({
   ...drawing,
   id: 'p-portrait',
   slug: 'retrato-lapis',
   name: { pt: 'Retrato a lápis', en: 'Pencil portrait' },
   subtitle: { pt: 'A4 · sob encomenda', en: 'A4 · made to order' },
+  description: {
+    pt: 'Retrato a grafite sobre papel A4, desenhado a partir de uma foto que você me manda. A tiragem deste ano acabou.',
+    en: 'A graphite portrait on A4 paper, drawn from a photo you send me. This year’s run is sold out.',
+  },
   priceCents: 18000,
   stock: 0,
+  specs: [
+    { key: { pt: 'Técnica', en: 'Medium' }, value: { pt: 'Grafite sobre papel', en: 'Graphite on paper' } },
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A4, 21 × 29,7 cm', en: 'A4, 21 × 29.7 cm' } },
+    { key: { pt: 'Prazo', en: 'Lead time' }, value: { pt: '3 semanas', en: '3 weeks' } },
+  ],
   photos: [],
-}
+})
 
-export const digitalLetter: PublicProduct = {
+export const digitalLetter: PublicProduct = deepFreeze({
   id: 'p-digital',
   slug: 'carta-digital',
   name: { pt: 'Carta digital', en: 'Digital letter' },
@@ -1061,31 +1151,50 @@ export const digitalLetter: PublicProduct = {
   photos: [],
   featured: false,
   active: true,
-}
+})
 
-export const inactiveGuide: PublicProduct = {
+export const inactiveGuide: PublicProduct = deepFreeze({
   ...digitalLetter,
   id: 'p-guide',
   slug: 'guia-nanquim-pdf',
   name: { pt: 'Guia de nanquim (PDF)', en: 'India ink guide (PDF)' },
   subtitle: { pt: 'Download · 24 páginas', en: 'Download · 24 pages' },
+  description: {
+    pt: 'Guia em PDF com o material, os traços e os exercícios que uso para desenhar a nanquim. Saiu de catálogo.',
+    en: 'A PDF guide to the materials, strokes and exercises I use to draw in India ink. No longer on sale.',
+  },
   priceCents: 1800,
+  specs: [
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'PDF, 24 páginas', en: 'PDF, 24 pages' } },
+    { key: { pt: 'Idioma', en: 'Language' }, value: { pt: 'Português e inglês', en: 'Portuguese and English' } },
+  ],
   active: false,
-}
+})
 
 // Its own object, deliberately not an alias of `soldOutDrawing`: two named fixtures pointing at
 // one object let a story that mutates one corrupt the other, and it also conflates two separate
 // scenarios — a story about the missing-photo placeholder should not silently also be testing
 // the sold-out state.
-export const productWithoutPhotos: PublicProduct = {
+export const productWithoutPhotos: PublicProduct = deepFreeze({
   ...letter,
   id: 'p-no-photo',
   slug: 'caderno-costurado',
   name: { pt: 'Caderno costurado', en: 'Hand-sewn notebook' },
   subtitle: { pt: 'A5 · 80 páginas', en: 'A5 · 80 pages' },
+  description: {
+    pt: 'Caderno costurado à mão, capa de papelão revestido e miolo de papel pólen. Ainda não fotografei este.',
+    en: 'A hand-sewn notebook with a covered board cover and cream paper inside. I have not photographed this one yet.',
+  },
+  specs: [
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A5, 80 páginas', en: 'A5, 80 pages' } },
+    { key: { pt: 'Costura', en: 'Binding' }, value: { pt: 'Costura copta, à vista', en: 'Exposed Coptic stitch' } },
+    { key: { pt: 'Papel', en: 'Paper' }, value: { pt: 'Pólen 90g', en: '90gsm cream paper' } },
+  ],
   photos: [],
-}
-export const products: PublicProduct[] = [letter, drawing, soldOutDrawing, digitalLetter]
+  featured: false,
+})
+
+export const products: PublicProduct[] = deepFreeze([letter, drawing, soldOutDrawing, digitalLetter])
 ```
 
 - [ ] **Step 4: Implement the order fixtures**
@@ -1100,6 +1209,11 @@ spreading `paidOrder`:
   renders this as a timeline, so a backwards one is visible, not theoretical.
 - **`stripeSessionId` must be unique per order.** Three orders shared `cs_test_411`, which points
   three admin rows at one Stripe session.
+- **Every order that reached Stripe carries a `stripeSessionId`.** `apps/api/src/routes/checkout.ts:94`
+  writes it onto the order immediately after the session is created, so `pending` and `expired`
+  orders have one too — an order without one exists only in the crash window between those two
+  writes, which PR 1's boot-time sweep expires. The field is genuinely optional in the type, so
+  PR 4's admin UI must still handle its absence; add a fixture for that case there if the UI needs it.
 - **Add `publicPendingOrder`.** The spec's Done page covers both pending and paid
   (`docs/superpowers/specs/2026-09-07-webshop-v2-design.md`, Done page), and only the paid shape
   existed, so the pending variant had no fixture to render from.
@@ -1109,13 +1223,18 @@ Create `apps/web/src/fixtures/orders.ts`:
 
 ```ts
 import type { AdminOrder, PublicOrder } from '@shop/shared'
+import { deepFreeze } from './freeze'
 
 const items: AdminOrder['items'] = [
   { productId: 'p-letter', slug: 'carta-escrita', name: { pt: 'Carta escrita à mão', en: 'Handwritten letter' }, qty: 1, unitAmountCents: 4500 },
   { productId: 'p-drawing', slug: 'desenho-nanquim', name: { pt: 'Desenho a nanquim', en: 'India ink drawing' }, qty: 2, unitAmountCents: 12000 },
 ]
 
-export const pendingOrder: AdminOrder = {
+// Timelines are internally consistent: every order satisfies createdAt <= paidAt <= shippedAt for
+// whichever of those it carries. Orders built by spreading `paidOrder` must override `paidAt` too,
+// or they inherit a payment that happened before they existed. An admin order-detail story renders
+// this as a timeline, so a backwards one is visible rather than theoretical.
+export const pendingOrder: AdminOrder = deepFreeze({
   id: 'o-1',
   orderNumber: 410,
   status: 'pending',
@@ -1136,9 +1255,9 @@ export const pendingOrder: AdminOrder = {
   locale: 'pt',
   items: [items[0]!],
   amounts: { itemsCents: 4500, shippingCents: 2200, totalCents: 6700, currency: 'brl' },
-}
+})
 
-export const paidOrder: AdminOrder = {
+export const paidOrder: AdminOrder = deepFreeze({
   ...pendingOrder,
   id: 'o-2',
   orderNumber: 411,
@@ -1149,30 +1268,34 @@ export const paidOrder: AdminOrder = {
   items,
   amounts: { itemsCents: 28500, shippingCents: 4100, totalCents: 32600, currency: 'brl' },
   stripeSessionId: 'cs_test_411',
-}
+})
 
-export const shippedOrder: AdminOrder = {
+export const shippedOrder: AdminOrder = deepFreeze({
   ...paidOrder,
   id: 'o-3',
   orderNumber: 412,
   status: 'shipped',
   createdAt: '2026-08-28T15:00:00.000Z',
+  paidAt: '2026-08-28T15:04:00.000Z',
   shippedAt: '2026-08-30T10:00:00.000Z',
   trackingCode: 'BR8841200SC',
   buyer: { name: 'Júlia Ferreira', email: 'julia@example.com' },
-}
+  stripeSessionId: 'cs_test_412',
+})
 
-export const oversoldOrder: AdminOrder = {
+export const oversoldOrder: AdminOrder = deepFreeze({
   ...paidOrder,
   id: 'o-4',
   orderNumber: 413,
   status: 'oversold',
   createdAt: '2026-09-04T18:45:00.000Z',
+  paidAt: '2026-09-04T18:46:00.000Z',
   buyer: { name: 'Bruno Tavares', email: 'bruno@example.com' },
   notes: undefined,
-}
+  stripeSessionId: 'cs_test_413',
+})
 
-export const expiredOrder: AdminOrder = {
+export const expiredOrder: AdminOrder = deepFreeze({
   ...pendingOrder,
   id: 'o-5',
   orderNumber: 409,
@@ -1180,19 +1303,19 @@ export const expiredOrder: AdminOrder = {
   createdAt: '2026-09-02T09:10:00.000Z',
   buyer: { name: 'Helena Prado', email: 'helena@example.com' },
   notes: undefined,
-}
+})
 
 // All five lifecycle states — the admin table renders this list, so a missing state
-// means a status pill nobody ever sees in a story.
-export const adminOrders: AdminOrder[] = [
+// means a status pill nobody ever sees in a story. Not sorted: ordering is the table's job.
+export const adminOrders: AdminOrder[] = deepFreeze([
   oversoldOrder,
   shippedOrder,
   paidOrder,
   pendingOrder,
   expiredOrder,
-]
+])
 
-export const publicPaidOrder: PublicOrder = {
+export const publicPaidOrder: PublicOrder = deepFreeze({
   orderNumber: 411,
   status: 'paid',
   items: items.map((i) => ({ name: i.name, qty: i.qty })),
@@ -1200,7 +1323,18 @@ export const publicPaidOrder: PublicOrder = {
   currency: 'brl',
   shippingMethod: 'sedex',
   eta: { pt: '3 a 5 dias úteis', en: '3–5 business days' },
-}
+})
+
+/** The Done page covers pending as well as paid (spec, "Done page"), so both shapes exist. */
+export const publicPendingOrder: PublicOrder = deepFreeze({
+  orderNumber: 410,
+  status: 'pending',
+  items: [{ name: items[0]!.name, qty: items[0]!.qty }],
+  totalCents: 6700,
+  currency: 'brl',
+  shippingMethod: 'pac',
+  eta: { pt: '8 a 12 dias úteis', en: '8–12 business days' },
+})
 ```
 
 - [ ] **Step 5: Implement the checkout fixtures**
@@ -1208,7 +1342,8 @@ export const publicPaidOrder: PublicOrder = {
 Create `apps/web/src/fixtures/checkout.ts`:
 
 ```ts
-import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRules } from '@shop/shared'
+import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRequestSchema, checkoutRules } from '@shop/shared'
+import { deepFreeze } from './freeze'
 import { drawing, letter } from './products'
 
 const buyer: CheckoutRequest['buyer'] = {
@@ -1222,13 +1357,13 @@ const buyer: CheckoutRequest['buyer'] = {
  * benefit but fails `checkoutRequestSchema` on the empty name and email. Never feed it to
  * `.parse` — render it, fill it in, then parse.
  */
-export const emptyCheckout: CheckoutRequest = {
+export const emptyCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }],
   locale: 'pt',
   buyer: { name: '', email: '' },
-}
+})
 
-export const brCheckout: CheckoutRequest = {
+export const brCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }, { slug: drawing.slug, qty: 2 }],
   locale: 'pt',
   buyer,
@@ -1244,9 +1379,9 @@ export const brCheckout: CheckoutRequest = {
   },
   shippingMethod: 'sedex',
   notes: 'É presente, capricha no embrulho.',
-}
+})
 
-export const intlCheckout: CheckoutRequest = {
+export const intlCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: letter.slug, qty: 1 }],
   locale: 'en',
   buyer: { name: 'Sam Reyes', email: 'sam@example.com' },
@@ -1258,18 +1393,18 @@ export const intlCheckout: CheckoutRequest = {
     state: 'NY',
   },
   shippingMethod: 'intl',
-}
+})
 
-export const digitalCheckout: CheckoutRequest = {
+export const digitalCheckout: CheckoutRequest = deepFreeze({
   items: [{ slug: 'carta-digital', qty: 1 }],
   locale: 'pt',
   buyer,
-}
+})
 
 /**
  * An incomplete Brazilian address, kept next to the errors it produces so the two cannot drift.
  */
-export const incompleteBrCheckout: CheckoutRequest = {
+export const incompleteBrCheckout: CheckoutRequest = deepFreeze({
   ...brCheckout,
   shippingAddress: {
     country: 'BR',
@@ -1280,15 +1415,8 @@ export const incompleteBrCheckout: CheckoutRequest = {
     state: '',
   },
   shippingMethod: undefined,
-}
+})
 
-/**
- * What the checkout page actually receives from the API after submitting that address. DERIVED
- * from the real rules rather than written by hand: `apps/api/src/routes/checkout.ts:36-37` passes
- * `checkoutRules(...)` straight into the 400 response, so this object's shape is that function's
- * output and nothing else — in particular it never carries `buyer.*` keys, which zod rejects
- * earlier and separately.
- */
 // Narrowed rather than cast: `checkoutRules` returns `FieldErrors | null`, and `as FieldErrors`
 // would turn a future non-violating input into a null wearing the wrong type, surfacing as an
 // obscure TypeError inside whichever story reads a key off it.
@@ -1297,30 +1425,49 @@ if (!derivedBrCheckoutErrors) {
   throw new Error('incompleteBrCheckout must violate the BR rules: brCheckoutErrors is derived from them')
 }
 
+/**
+ * The cross-field-rule half of what the checkout page can receive. DERIVED from the real rules
+ * rather than written by hand: `apps/api/src/routes/checkout.ts:36-37` passes `checkoutRules(...)`
+ * straight into the 400 response, so this object's shape is that function's output and nothing
+ * else. It carries no `buyer.*` key — not because the page can never receive one, but because the
+ * rules never produce one; see `buyerCheckoutErrors` for the other half.
+ */
 export const brCheckoutErrors: FieldErrors = deepFreeze(derivedBrCheckoutErrors)
 
-/**
- * The OTHER shape the checkout page can receive. `apps/api/src/errors.ts:26-33` turns a ZodError
- * into `fieldErrors` keyed by `issue.path.join('.')`, so a bad buyer arrives as a 400 with the
- * same field name and the same code — just never mixed with rule errors, because the parse at
- * `routes/checkout.ts:21` happens before the rules at :36. Note the values: the rules emit stable
- * codes, zod emits raw English prose, so the checkout UI cannot translate both through one table.
- */
-export const buyerCheckoutErrors: FieldErrors = deepFreeze({
-  'buyer.name': ['String must contain at least 2 character(s)'],
-  'buyer.email': ['Invalid email'],
-})
+// The OTHER shape the page can receive, derived the same way rather than hand-written.
+// `apps/api/src/errors.ts:26-33` turns a ZodError into `fieldErrors` keyed by
+// `issue.path.join('.')` — the SAME response field and the SAME key shape as the rules produce,
+// so `{ 'buyer.name': [...] }` is a payload the checkout page really does get. What never happens
+// is the two arriving MIXED: the parse at `routes/checkout.ts:21` runs before the rules at :36,
+// so a request with a bad buyer is rejected before `checkoutRules` is ever called.
+const buyerParse = checkoutRequestSchema.safeParse(emptyCheckout)
+if (buyerParse.success) {
+  throw new Error('emptyCheckout must fail the schema: buyerCheckoutErrors is derived from its issues')
+}
+const zodFieldErrors: FieldErrors = {}
+for (const issue of buyerParse.error.issues) {
+  const key = issue.path.length ? issue.path.join('.') : '_'
+  ;(zodFieldErrors[key] ??= []).push(issue.message)
+}
 
-export const cartLines: TotalsLine[] = [
+/**
+ * NOTE for the checkout UI: the values here are raw English prose straight from zod ("String must
+ * contain at least 2 character(s)"), while `brCheckoutErrors` carries stable codes (`invalid_cep`,
+ * `required`). A single code-keyed translation table cannot render both, and this shop is
+ * bilingual — that is a PR 3/PR 5 decision, flagged here so it is not discovered late.
+ */
+export const buyerCheckoutErrors: FieldErrors = deepFreeze(zodFieldErrors)
+
+export const cartLines: TotalsLine[] = deepFreeze([
   { priceCents: letter.priceCents, qty: 1, type: 'physical' },
   { priceCents: drawing.priceCents, qty: 2, type: 'physical' },
-]
+])
 ```
 
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/fixtures.test.ts`
-Expected: PASS (8 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
+Expected: PASS (10 tests). If `TotalsLine` or `FieldErrors` are not exported from `@shop/shared`, check `packages/shared/dist/index.d.ts` and use the exported names; report any mismatch.
 
 - [ ] **Step 7: Commit**
 
