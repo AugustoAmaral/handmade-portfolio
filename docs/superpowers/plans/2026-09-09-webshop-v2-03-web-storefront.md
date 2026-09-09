@@ -545,6 +545,7 @@ This is the ONLY place the language changes. It reads `localStorage['shop_lang']
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
+// apps/web/test/app/use-lang.test.tsx
 import { act, renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
@@ -601,6 +602,15 @@ describe('useLang', () => {
     localStorage.setItem('shop_lang', 'klingon')
     const { result } = renderHook(() => useLang(), { wrapper })
     expect(result.current.lang).toBe('en')
+  })
+
+  it('writes nothing on mount, so a visitor who never chooses keeps following the browser', () => {
+    // The stored value means "the user chose this", never "the browser said this once". Writing a
+    // sniffed language on mount would freeze the first visit's browser setting forever, and a
+    // visitor who later switches their browser to Portuguese would keep getting English.
+    browserLanguage('en-GB')
+    renderHook(() => useLang(), { wrapper })
+    expect(localStorage.getItem('shop_lang')).toBeNull()
   })
 
   it('toggles, persists, and actually changes the i18n instance', async () => {
@@ -660,6 +670,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```ts
+// apps/web/src/app/state/useLang.ts
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LANGS, type Lang } from '../../copy/i18n'
@@ -692,7 +703,6 @@ export function useLang(): { lang: Lang; toggle(): void } {
   const [lang, setLang] = useState<Lang>(initialLang)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, lang)
     // `language`, not `resolvedLanguage`: only pt has a resource bundle (English keys render
     // themselves), and i18next only resolves to a language that HAS translations, so
     // `resolvedLanguage` is undefined while the app is in English. Guarding on it would compare
@@ -700,7 +710,16 @@ export function useLang(): { lang: Lang; toggle(): void } {
     if (i18n.language !== lang) void i18n.changeLanguage(lang)
   }, [lang, i18n])
 
-  const toggle = useCallback(() => setLang((prev) => (prev === 'pt' ? 'en' : 'pt')), [])
+  // Persisting belongs here and not in the effect: `shop_lang` records a CHOICE. Written on mount
+  // it would record a sniff instead, freezing the first visit's browser setting forever — a
+  // visitor who later switched their browser to Portuguese would keep getting English. Reading
+  // `lang` rather than the functional update is what makes the next value available to write, and
+  // is why this closes over `[lang]`; it is a prop two components deep and changes once per switch.
+  const toggle = useCallback(() => {
+    const next: Lang = lang === 'pt' ? 'en' : 'pt'
+    localStorage.setItem(STORAGE_KEY, next)
+    setLang(next)
+  }, [lang])
 
   return { lang, toggle }
 }
@@ -708,7 +727,15 @@ export function useLang(): { lang: Lang; toggle(): void } {
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Expected: PASS, 7 tests / 13 assertions.
+Expected: PASS, 8 tests / 14 assertions.
+
+> **Amended twice after Task 3 shipped.** Both blocks are regenerated from the files as built.
+>
+> The draft's headline assertion, `expect(copyI18n.resolvedLanguage).toBe('en')`, **cannot pass against a correct implementation** — see the amended language constraint at the top of this plan. It is replaced by two assertions that are genuinely different claims: `t('Add to bag')` returning the key proves the copy changed, and `i18n.language` proves it changed to the language we actually ship. The ORDER matters: with `language` first, deleting `changeLanguage` aborts the test before `t()` runs, making `t()` an unproven passenger.
+>
+> The draft also spied no browser language on the toggle test while jsdom defaults to `en-US`, so the hook would have started in English and the assertion would have failed. Every test now declares the browser it assumes.
+>
+> **Behaviour decided here:** `shop_lang` is written only by `toggle`, never by the mount effect. `initialLang()` treats a stored value as "the user chose this" and ranks it above the browser, so writing a sniff into it made the hook lie to itself on the second visit — and made the navigator branch dead code forever after the first render, which is the guard-masking problem one level up. The cost: `toggle` closes over `[lang]` rather than using a functional update, so two toggles in the same tick would collapse into one. Writing inside the updater would be worse — StrictMode may invoke it twice and double-write.
 
 - [ ] **Step 5: Prove the assertions can fail**
 
