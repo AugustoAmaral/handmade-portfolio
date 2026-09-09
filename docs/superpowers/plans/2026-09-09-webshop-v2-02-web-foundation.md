@@ -396,6 +396,7 @@ Replace `apps/web/vitest.config.ts` with:
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
@@ -423,7 +424,12 @@ export default defineConfig({
         },
       },
       {
-        plugins: [react(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
+        // Tailwind belongs here, not only in vite.config.ts: vitest does not read that file, so
+        // without this plugin `preview.tsx`'s `import '../src/index.css'` ships `@import
+        // 'tailwindcss'` unprocessed and every story renders unstyled — Times, 16px, black on
+        // white. Stories would then look right in Storybook and be TESTED as something else, and
+        // the a11y gate would silently lose every style-dependent rule, colour contrast included.
+        plugins: [react(), tailwindcss(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
         test: {
           name: 'storybook',
           browser: {
@@ -441,6 +447,16 @@ export default defineConfig({
 ```
 
 No `passWithNoTests` anywhere — see the amendment note above.
+
+Amended a fourth time 2026-09-09, during Task 9, when the first stories to ever run revealed the
+browser project was rendering without Tailwind. Measured in the running browser: `color`
+`rgb(0,0,0)`, `fontSize` 16px, `fontFamily` Times, 68 CSS rules in total. `@tailwindcss/vite` was
+only ever in `vite.config.ts`, which vitest does not read. Storybook's own builder DOES read that
+file, so `build-storybook` was styled while the story TESTS were not — the two halves of "stories
+are the test suite" were looking at different pages. The a11y gate was still catching structural
+rules (`button-name` fails) but could not see contrast at all, so it was passing at 1.3:1.
+The `unit` project deliberately does NOT get the plugin: jsdom computes no styles, so it would be
+cost with no signal.
 
 Amended again 2026-09-09 (third amendment), after the review measured that the guardrail this plan had moved off the command line was not actually in force. `apps/web/package.json` used to run `vitest --pool=forks --poolOptions.forks.minForks=1 --poolOptions.forks.maxForks=2`, which applied globally; nesting the same options inside the `unit` project looks equivalent and typechecks, and the resolved project config even echoes the values back — but the pool is built once per run from the ROOT config. Measured with vitest's Node API on this machine: root `poolOptions` resolved to `{"threads":{},"forks":{}}` and root `maxWorkers`/`minWorkers` to `undefined`, so `maxThreads` fell through to `numCpus - 1` = 10 forks. Confirmed in the source: `createForksPool` reads `vitest.config.poolOptions?.forks`, never the project's. `maxWorkers`, `minWorkers` and `fileParallelism` are all `NonProjectOptions`, exactly like `passWithNoTests`. The guardrail therefore lives at the root, where it also covers the browser project.
 
@@ -1817,6 +1833,13 @@ If `storybook/test` does not resolve, try `@storybook/test`; report which one th
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook`
 Expected: PASS — every story renders, and the three `play` functions assert. The `StatusPill` assertion proves the i18n decorator is wired (default locale `pt`).
+
+Accessibility is gating here and, since Task 4's fourth amendment, it can finally see colour. The
+primitives must meet WCAG AA against the paper background: 4.5:1 for normal text, 3:1 for text at
+24px or above. Where a value from the approved prototype fails, adjust it by the smallest amount
+that passes — raise an opacity, darken a tone — and report the before/after ratio for every change,
+so the design decision stays visible and reversible. Do not disable the contrast rule to keep a
+value.
 
 Two things to know before reading a failure here:
 
