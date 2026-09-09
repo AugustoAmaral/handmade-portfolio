@@ -35,3 +35,21 @@ export const NoPhoto: Story = {
     await expect(canvas.getByText('Ainda sem foto')).toBeInTheDocument()
   },
 }
+
+// The hero's shape, added in Task 6, and it fails the same silent way `PillButton`'s `block` size
+// does: a frame that stretches to nothing is a frame with no height, no error and no complaint
+// anywhere. Measured against the positioned box it is given, because nothing else in the suite
+// looks at how tall this one ends up.
+export const Fill: Story = {
+  args: { src: SWATCH, ratio: 'fill' },
+  decorators: [
+    (Story) => (
+      <div className="relative h-[200px]">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas, args }) => {
+    await expect(canvas.getByRole('img', { name: args.alt }).getBoundingClientRect().height).toBe(200)
+  },
+}
