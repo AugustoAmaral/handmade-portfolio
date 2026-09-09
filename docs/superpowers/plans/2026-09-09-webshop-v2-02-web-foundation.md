@@ -658,12 +658,17 @@ export function createCopyInstance(lang: Lang = 'pt'): I18n {
 }
 
 export const copyI18n = createCopyInstance('pt')
+
+// Initialised on creation: an exported-but-uninitialised instance is a trap, because `t()` on it
+// returns undefined silently rather than throwing. Synchronous here — inline resources, no
+// backend, no async detector.
+void copyI18n.init()
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit test/copy.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Wire the decorator and the toolbar**
 
