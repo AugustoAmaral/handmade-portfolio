@@ -11,10 +11,13 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build -w @shop/shared
+      - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
       - run: npm test
         env: { NODE_OPTIONS: --max-old-space-size=4096 }
       - run: npm run build
+        env: { NODE_OPTIONS: --max-old-space-size=4096 }
+      - run: npm run build-storybook -w @shop/web
         env: { NODE_OPTIONS: --max-old-space-size=4096 }
   e2e:
     runs-on: ubuntu-latest
