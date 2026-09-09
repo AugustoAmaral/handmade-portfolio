@@ -1,6 +1,13 @@
-import { SHIPPING_METHODS, checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
+import { ORDER_STATUSES, SHIPPING_METHODS, checkoutRequestSchema, checkoutRules, computeTotals } from '@shop/shared'
 import { describe, expect, it } from 'vitest'
-import { brCheckout, cartLines, digitalCheckout, intlCheckout } from '../src/fixtures/checkout'
+import {
+  brCheckout,
+  brCheckoutErrors,
+  cartLines,
+  digitalCheckout,
+  incompleteBrCheckout,
+  intlCheckout,
+} from '../src/fixtures/checkout'
 import { adminOrders, paidOrder, publicPaidOrder } from '../src/fixtures/orders'
 import { products } from '../src/fixtures/products'
 
@@ -37,7 +44,9 @@ describe('fixtures', () => {
   })
 
   it('covers every admin order status', () => {
-    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(['pending', 'paid', 'shipped', 'oversold']))
+    // Derived from the shared status union, not a hard-coded list: a sixth lifecycle state added
+    // to ORDER_STATUSES must fail here rather than quietly go unrendered by every story.
+    expect(new Set(adminOrders.map((o) => o.status))).toEqual(new Set(ORDER_STATUSES))
   })
 
   it('prices every admin order with the real shipping table', () => {
@@ -50,5 +59,24 @@ describe('fixtures', () => {
         totalCents: order.amounts.totalCents,
       })
     }
+  })
+
+  it('derives the checkout error fixture from the real rules', () => {
+    expect(brCheckoutErrors).toEqual(checkoutRules(incompleteBrCheckout, true))
+    expect(Object.keys(brCheckoutErrors).sort()).toEqual([
+      'shippingAddress.district',
+      'shippingAddress.number',
+      'shippingAddress.postalCode',
+      'shippingAddress.state',
+      'shippingMethod',
+    ])
+  })
+
+  it('never carries buyer keys in the checkout error fixture', () => {
+    // Regression guard. The API sends this object straight from checkoutRules
+    // (apps/api/src/routes/checkout.ts:36-37), and checkoutRequestSchema.parse has already
+    // rejected a bad buyer on a separate path, so a `buyer.*` key here would be a shape the
+    // checkout page can never actually receive. The first fixture got this wrong.
+    expect(Object.keys(brCheckoutErrors).filter((k) => k.startsWith('buyer'))).toEqual([])
   })
 })

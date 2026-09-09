@@ -85,5 +85,16 @@ export const inactiveGuide: PublicProduct = {
   active: false,
 }
 
-export const productWithoutPhotos = soldOutDrawing
+// Its own object, deliberately not an alias of `soldOutDrawing`: two named fixtures pointing at
+// one object let a story that mutates one corrupt the other, and it also conflates two separate
+// scenarios — a story about the missing-photo placeholder should not silently also be testing
+// the sold-out state.
+export const productWithoutPhotos: PublicProduct = {
+  ...letter,
+  id: 'p-no-photo',
+  slug: 'caderno-costurado',
+  name: { pt: 'Caderno costurado', en: 'Hand-sewn notebook' },
+  subtitle: { pt: 'A5 · 80 páginas', en: 'A5 · 80 pages' },
+  photos: [],
+}
 export const products: PublicProduct[] = [letter, drawing, soldOutDrawing, digitalLetter]

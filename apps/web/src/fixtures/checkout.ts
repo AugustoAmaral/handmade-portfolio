@@ -1,4 +1,4 @@
-import type { CheckoutRequest, FieldErrors, TotalsLine } from '@shop/shared'
+import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRules } from '@shop/shared'
 import { drawing, letter } from './products'
 
 const buyer: CheckoutRequest['buyer'] = {
@@ -51,13 +51,38 @@ export const digitalCheckout: CheckoutRequest = {
   buyer,
 }
 
-/** What the checkout page shows after submitting an incomplete Brazilian address. */
-export const brCheckoutErrors: FieldErrors = {
-  'buyer.name': ['required'],
-  'shippingAddress.postalCode': ['invalid_cep'],
-  'shippingAddress.number': ['required'],
-  shippingMethod: ['required'],
+/**
+ * An incomplete Brazilian address, kept next to the errors it produces so the two cannot drift.
+ */
+export const incompleteBrCheckout: CheckoutRequest = {
+  ...brCheckout,
+  shippingAddress: {
+    country: 'BR',
+    postalCode: '3015',
+    street: 'Rua Sapucaí',
+    number: '',
+    city: 'Belo Horizonte',
+    state: '',
+  },
+  shippingMethod: undefined,
 }
+
+// Narrowed rather than cast: `checkoutRules` returns `FieldErrors | null`, and `as FieldErrors`
+// would turn a future valid `incompleteBrCheckout` into a `null` wearing the wrong type, which
+// surfaces as a confusing TypeError inside whichever story reads a key off it.
+const derivedBrCheckoutErrors = checkoutRules(incompleteBrCheckout, true)
+if (!derivedBrCheckoutErrors) {
+  throw new Error('incompleteBrCheckout must violate the BR rules: brCheckoutErrors is derived from them')
+}
+
+/**
+ * What the checkout page actually receives from the API after submitting that address. DERIVED
+ * from the real rules rather than written by hand: `apps/api/src/routes/checkout.ts:36-37` passes
+ * `checkoutRules(...)` straight into the 400 response, so this object's shape is that function's
+ * output and nothing else — in particular it never carries `buyer.*` keys, which zod rejects
+ * earlier and separately.
+ */
+export const brCheckoutErrors: FieldErrors = derivedBrCheckoutErrors
 
 export const cartLines: TotalsLine[] = [
   { priceCents: letter.priceCents, qty: 1, type: 'physical' },

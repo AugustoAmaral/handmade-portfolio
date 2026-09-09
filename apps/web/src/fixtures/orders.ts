@@ -62,7 +62,25 @@ export const oversoldOrder: AdminOrder = {
   notes: undefined,
 }
 
-export const adminOrders: AdminOrder[] = [oversoldOrder, shippedOrder, paidOrder, pendingOrder]
+export const expiredOrder: AdminOrder = {
+  ...pendingOrder,
+  id: 'o-5',
+  orderNumber: 409,
+  status: 'expired',
+  createdAt: '2026-09-02T09:10:00.000Z',
+  buyer: { name: 'Helena Prado', email: 'helena@example.com' },
+  notes: undefined,
+}
+
+// All five lifecycle states — the admin table renders this list, so a missing state means a
+// status pill nobody ever sees in a story.
+export const adminOrders: AdminOrder[] = [
+  oversoldOrder,
+  shippedOrder,
+  paidOrder,
+  pendingOrder,
+  expiredOrder,
+]
 
 export const publicPaidOrder: PublicOrder = {
   orderNumber: 411,
