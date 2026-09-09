@@ -23,6 +23,13 @@ export interface OrderSummaryPanelProps {
    * translation ships as fluent English.
    */
   submitError: string | null
+  /**
+   * The id of the `<form>` the container wrapped this page in. Given one, the button becomes that
+   * form's submit control and `onSubmit` is left alone — the form's own handler is then the single
+   * path, and wiring both would run it twice per click. Left out, the button keeps its original
+   * `type="button"` and calls `onSubmit` directly.
+   */
+  submitFormId?: string
   onSubmit(): void
 }
 
@@ -77,6 +84,12 @@ function TotalsRow({
  * state is a live region beside it, which IS announced, and the button is disabled so the second
  * click cannot happen — two pending orders and two Stripe sessions is what a double submit costs.
  *
+ * ENTER SUBMITS THE CHECKOUT, AND THIS BUTTON IS WHY IT CAN. The fields are in the other grid
+ * column, so HTML's implicit submission — which needs a submit control the form owns — had nothing
+ * to activate and sixteen inputs did nothing on Enter. `submitFormId` makes this button that
+ * control. The prop is optional and absent by default, so every story written before it renders
+ * exactly the plain button it did.
+ *
  * `PillButton` is used at its `block` size with no padding override. Its own note explains why:
  * the prototype's `17px` and the primitive's `15px` have equal specificity in the compiled
  * stylesheet and the winner is whichever Tailwind emitted last.
@@ -90,6 +103,7 @@ export function OrderSummaryPanel({
   lang,
   submitting,
   submitError,
+  submitFormId,
   onSubmit,
 }: OrderSummaryPanelProps) {
   const { t } = useTranslation()
@@ -139,7 +153,13 @@ export function OrderSummaryPanel({
               <Price cents={totalCents} lang={lang} />
             </TotalsRow>
           </dl>
-          <PillButton size="block" disabled={submitting} onClick={onSubmit}>
+          <PillButton
+            size="block"
+            disabled={submitting}
+            type={submitFormId ? 'submit' : 'button'}
+            form={submitFormId}
+            onClick={submitFormId ? undefined : onSubmit}
+          >
             {t('Pay {{total}}', { total: formatPrice(totalCents, lang) })}
           </PillButton>
           {submitting ? (

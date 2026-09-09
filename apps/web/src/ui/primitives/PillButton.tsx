@@ -5,6 +5,13 @@ interface Props {
   href?: string
   onClick?: () => void
   type?: 'button' | 'submit'
+  /**
+   * The id of the `<form>` this control submits. It states the association instead of inheriting it
+   * from where the markup happens to sit, which is what lets a caller be a form's submit control
+   * without knowing whether its parents put it inside one — the checkout's button is several
+   * components away from the fields it submits. Ignored in the `href` branch: a link owns no form.
+   */
+  form?: string
   variant?: 'solid' | 'outline'
   size?: 'default' | 'block'
   disabled?: boolean
@@ -44,6 +51,7 @@ export function PillButton({
   href,
   onClick,
   type = 'button',
+  form,
   variant = 'solid',
   size = 'default',
   disabled,
@@ -58,7 +66,7 @@ export function PillButton({
     )
   }
   return (
-    <button type={type} className={classes} onClick={onClick} disabled={disabled}>
+    <button type={type} form={form} className={classes} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   )

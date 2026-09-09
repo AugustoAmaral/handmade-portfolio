@@ -35,6 +35,13 @@ export interface CheckoutPageProps {
   submitting: boolean
   /** An API error CODE, not a sentence — `OrderSummaryPanel` translates it. */
   submitError: string | null
+  /**
+   * The id of the `<form>` the container wrapped this page in, passed straight through to the
+   * summary's button. Given one, that button becomes the form's submit control and Enter in any
+   * field submits; left out, the page renders exactly as it did before Task 11 and `onSubmit` is
+   * the only path. See the paragraph below on why the association has to be stated.
+   */
+  submitFormId?: string
   onBuyerChange(field: keyof BuyerValues, value: string): void
   onAddressChange(field: keyof AddressValues, value: string): void
   onNotesChange(field: keyof NotesValues, value: string): void
@@ -54,14 +61,14 @@ export interface CheckoutPageProps {
  * wrong would show an address form for a digital-only bag whose totals charge nothing and whose
  * submit the API accepts without one. This is what `CartLineData.type` was added for in step 0a.
  *
- * THERE IS NO `<form>` ELEMENT, and that is a decision with a cost. The submit control lives in
- * the other grid column, inside `OrderSummaryPanel`, and it renders `type="button"`. A `<form>`
- * around the grid would therefore contain no submit button, and HTML's implicit-submission rule
- * needs either a submit button or a single field that blocks it — with sixteen inputs, Enter would
- * do nothing at all. So the wrapper would be markup that changes no behaviour. THE COST IS REAL:
- * there is no Enter-to-submit on this checkout. Closing it means `OrderSummaryPanel` taking a
- * `type` and this page wrapping the grid, which is a Task 9 interface change; it is reported with
- * this task rather than done inside it.
+ * THE `<form>` IS THE CONTAINER'S, and this page only says which one it is. The submit control
+ * lives in the other grid column, inside `OrderSummaryPanel`, so a form wrapping the FIELDS would
+ * contain no submit button and HTML's implicit submission — which needs one, or a single field
+ * that blocks it — would leave sixteen inputs doing nothing on Enter. Task 11 wraps the whole page
+ * instead and passes its id down: the button quotes it back through `form=`, the association is
+ * stated rather than inherited from where the markup happens to sit, and clicking the button and
+ * pressing Enter become the same activation of the same control. Absent the prop this page is
+ * exactly what it was, which is what keeps Task 9's stories describing it.
  *
  * THE SUMMARY COLUMN IS STICKY AND THE PROTOTYPE'S IS NOT, though both say `position:sticky`. The
  * design pairs it with `align-items:start`, which shrinks the grid item to its content, and a
@@ -91,6 +98,7 @@ export function CheckoutPage({
   totalCents,
   submitting,
   submitError,
+  submitFormId,
   onBuyerChange,
   onAddressChange,
   onNotesChange,
@@ -141,6 +149,7 @@ export function CheckoutPage({
               lang={lang}
               submitting={submitting}
               submitError={submitError}
+              submitFormId={submitFormId}
               onSubmit={onSubmit}
             />
           </div>
