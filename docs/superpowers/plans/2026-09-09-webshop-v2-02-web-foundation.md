@@ -268,7 +268,7 @@ describe('jsdom storage', () => {
     expect(localStorage.getItem('probe')).toBeNull()
   })
 
-  it('shares one storage between globalThis and window', () => {
+  it('works when reached through window, the way the i18n detector reads it', () => {
     window.localStorage.setItem('shared', '1')
     expect(localStorage.getItem('shared')).toBe('1')
     localStorage.clear()
@@ -547,10 +547,13 @@ Note for PR 3: the app root must wrap the tree in `I18nextProvider` with an init
 Create `apps/web/test/copy.test.ts`:
 
 ```ts
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import path from 'node:path'
 import { getI18n } from 'react-i18next'
 import { describe, expect, it } from 'vitest'
 import pt from '../src/copy/pt.json'
 import { createCopyInstance } from '../src/copy/i18n'
+import { STATUS_LABELS } from '../src/ui/primitives/StatusPill'
 
 describe('copy instance', () => {
   it('renders the key itself in English', async () => {
@@ -596,7 +599,7 @@ describe('copy instance', () => {
     expect(i18n.options.nsSeparator).toBe(false)
   })
 
-  it('never becomes react-i18next\'s default instance', async () => {
+  it("never becomes react-i18next's default instance", async () => {
     // Guards the reason initReactI18next is not wired in: whichever instance inits last would
     // own every bare useTranslation() call in the app, including v1's dotted keys.
     const i18n = createCopyInstance('pt')
@@ -608,6 +611,103 @@ describe('copy instance', () => {
     for (const [key, value] of Object.entries(pt as Record<string, string>)) {
       expect(value, `empty translation for "${key}"`).not.toBe('')
     }
+  })
+})
+
+// The test the spec asks for at line 177, and the only thing standing between a Portuguese reader
+// and an English sentence. Keys ARE the English copy and `fallbackLng` is false, so a `t()` whose
+// key is absent from pt.json renders the key — perfectly formed English, no console warning, no
+// failing test, no error anywhere. `src/ui` is as small as it will ever be, which makes this the
+// cheapest this scan will ever be to write.
+const UI_DIR = path.join(__dirname, '..', 'src', 'ui')
+
+// Stories are scanned too, deliberately. They run as tests against the same i18n instance, they
+// are the only executable spec of the UI layer, and PR 3's page stories will carry most of the
+// app's copy. A story whose key is missing paints the English sentence in the interactions panel
+// and in the docs page, where it reads as approved copy and gets pasted into a component — the
+// exact path this test exists to close. Scanning them costs one glob.
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry)
+    if (statSync(full).isDirectory()) return walk(full)
+    return /\.tsx?$/.test(entry) ? [full] : []
+  })
+}
+
+// Comments come out first. Half of these files DISCUSS `t('...')` in prose, and a scanner that
+// reads its own documentation reports keys no code ever calls. Whole-line comments only: a
+// trailing one would have to contain a `t(` call to matter, and stripping those needs a parser.
+function stripComments(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trimStart()
+      return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*')
+    })
+    .join('\n')
+}
+
+// `\bt\(` and not `t\(`: the word boundary is what keeps `getByText(`, `expect(` and `formatPrice(`
+// out of the results.
+const LITERAL_CALL = /\bt\(\s*(['"`])([^'"`]*)\1/g
+const DYNAMIC_CALL = /\bt\(\s*[^'"`\s)]/g
+
+const sources = walk(UI_DIR).map((file) => ({
+  name: path.relative(UI_DIR, file),
+  source: stripComments(readFileSync(file, 'utf8')),
+}))
+
+const used = sources.flatMap(({ name, source }) =>
+  [...source.matchAll(LITERAL_CALL)].map((match) => ({ name, key: match[2]! })),
+)
+
+const dynamic = sources.filter(({ source }) => DYNAMIC_CALL.test(source)).map(({ name }) => name)
+
+const ptKeys = Object.keys(pt as Record<string, string>)
+
+// Keys pt.json already carries for the components PR 3 brings. The scan cannot find a caller yet
+// and that is expected, not a defect — so the assertion below is a SUBSET check: it stays green as
+// PR 3 wires each one up, and goes red the day a key arrives that nothing accounts for.
+const PLANNED_FOR_PR3 = [
+  'Add to bag', // ProductPage, ProductCard
+  'Your bag is empty.', // CartDrawer
+  'Ship to: Brazil', // CheckoutShippingSection
+  '{{count}} in stock', // ProductPage stock line
+  'Made to order', // ProductCard badge
+  'Sold out', // ProductCard badge
+  // Suspected DEAD rather than planned: ImageFrame takes `alt` as a prop and builds no alt text of
+  // its own, so as designed nothing is left to call this. It stays because pt.json is outside this
+  // wave's scope; PR 3 either has ImageFrame build its own alt from the product name or deletes it.
+  'Photo of {{name}}',
+]
+
+describe('copy completeness', () => {
+  it('finds ui files and t() calls to check', () => {
+    // Without this the whole suite below is vacuously green when the glob or the regex breaks.
+    expect(sources.length).toBeGreaterThan(0)
+    expect(used.length).toBeGreaterThan(0)
+  })
+
+  it.each(used.map(({ name, key }) => [`${name} · ${key}`, key]))('%s is translated in pt.json', (_label, key) => {
+    expect(ptKeys).toContain(key)
+  })
+
+  it('translates the keys behind the dynamic t() call in StatusPill', () => {
+    for (const label of Object.values(STATUS_LABELS)) {
+      expect(ptKeys, `StatusPill renders "${label}" and pt.json has no translation for it`).toContain(label)
+    }
+  })
+
+  it('has no dynamic t() call the scan cannot account for', () => {
+    // A key built at runtime is invisible to the regex above. There is exactly one, its keys are
+    // checked by the test above it, and this pins that number: a second one fails here and has to
+    // be given the same treatment instead of quietly escaping the scan.
+    expect(dynamic).toEqual(['primitives/StatusPill.tsx'])
+  })
+
+  it('carries no key in pt.json that nothing accounts for', () => {
+    const reachable = new Set([...used.map((u) => u.key), ...Object.values(STATUS_LABELS), ...PLANNED_FOR_PR3])
+    expect(ptKeys.filter((key) => !reachable.has(key))).toEqual([])
   })
 })
 ```
@@ -1005,12 +1105,19 @@ describe('fixtures', () => {
       const stamps = [o.createdAt, o.paidAt, o.shippedAt].filter((s): s is string => s != null)
       expect({ id: o.id, stamps }).toEqual({ id: o.id, stamps: [...stamps].sort() })
     }
-    const sessions = adminOrders.map((o) => o.stripeSessionId).filter((s): s is string => s != null)
-    expect(sessions.length).toBeGreaterThan(1)
-    expect(new Set(sessions).size).toBe(sessions.length)
+    // Not filtered on presence: every order that reached Stripe has a session id, so an order
+    // missing one must fail here rather than quietly drop out of the uniqueness check.
+    const sessions = adminOrders.map((o) => o.stripeSessionId)
+    expect(sessions.every((s) => typeof s === 'string' && s.length > 0)).toBe(true)
+    expect(new Set(sessions).size).toBe(adminOrders.length)
   })
 
   it('exposes the checkout errors the API can really send', () => {
+    // Two exact key lists, and nothing else. The rules never key on the buyer — a buyer error
+    // arrives from the zod path instead, in its own response, which is what `buyerCheckoutErrors`
+    // is for — and both halves of that sentence are already stated by the lists below. The
+    // `startsWith('buyer')` guards that used to sit beside them could not fail: each one was
+    // decided by the exact-key assertion on the line above it.
     expect(Object.keys(brCheckoutErrors).sort()).toEqual([
       'shippingAddress.district',
       'shippingAddress.number',
@@ -1018,11 +1125,7 @@ describe('fixtures', () => {
       'shippingAddress.state',
       'shippingMethod',
     ])
-    // The rules never key on the buyer; a buyer error arrives from the zod path instead, in its
-    // own response, which is what `buyerCheckoutErrors` is for.
-    expect(Object.keys(brCheckoutErrors).filter((k) => k.startsWith('buyer'))).toEqual([])
     expect(Object.keys(buyerCheckoutErrors).sort()).toEqual(['buyer.email', 'buyer.name'])
-    expect(Object.keys(buyerCheckoutErrors).every((k) => k.startsWith('buyer'))).toBe(true)
   })
 
   it('freezes the fixtures so one story cannot corrupt another', () => {
@@ -1274,6 +1377,13 @@ export const pendingOrder: AdminOrder = deepFreeze({
   locale: 'pt',
   items: [items[0]!],
   amounts: { itemsCents: 4500, shippingCents: 2200, totalCents: 6700, currency: 'brl' },
+  // Every order that reached Stripe carries a session id, pending and expired included:
+  // `apps/api/src/routes/checkout.ts:94` writes it immediately after creating the session, and
+  // `models/order.ts:46` indexes it unique + sparse. The field is nonetheless optional in the
+  // type because of the crash window between those two writes — an order created but killed
+  // before the id is persisted. `lib/orphans.ts` sweeps those to `expired` at boot after an hour.
+  // So PR 4's admin UI must still handle its absence; add a fixture for it there if the UI needs one.
+  stripeSessionId: 'cs_test_410',
 })
 
 export const paidOrder: AdminOrder = deepFreeze({
@@ -1322,6 +1432,7 @@ export const expiredOrder: AdminOrder = deepFreeze({
   createdAt: '2026-09-02T09:10:00.000Z',
   buyer: { name: 'Helena Prado', email: 'helena@example.com' },
   notes: undefined,
+  stripeSessionId: 'cs_test_409',
 })
 
 // All five lifecycle states — the admin table renders this list, so a missing state
@@ -1686,7 +1797,11 @@ Create `apps/web/src/ui/primitives/StatusPill.tsx`:
 import type { OrderStatus } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 
-const LABEL: Record<OrderStatus, string> = {
+// Exported for the copy-completeness scan. `t(STATUS_LABELS[status])` is a dynamic call: the
+// scanner reads keys out of `t('literal')` call sites and there is no literal here, so these five
+// keys would be the one part of the UI's copy nothing checked against pt.json. Exporting the map
+// is what lets the test check them the same way it checks every other key.
+export const STATUS_LABELS: Record<OrderStatus, string> = {
   pending: 'Awaiting payment',
   paid: 'In production',
   shipped: 'Shipped',
@@ -1706,7 +1821,7 @@ export function StatusPill({ status }: { status: OrderStatus }) {
   const { t } = useTranslation()
   return (
     <span className={`font-mono inline-flex px-3 py-1 text-[10px] uppercase tracking-[0.12em] ${TONE[status]}`}>
-      {t(LABEL[status])}
+      {t(STATUS_LABELS[status])}
     </span>
   )
 }
@@ -1825,6 +1940,25 @@ export const EveryStatus: Story = {
       ))}
     </div>
   ),
+}
+
+// The only story in the suite that runs the preview's SECOND i18n instance. `preview.tsx` ships a
+// pt/en toolbar and `initialGlobals: { locale: 'pt' }`, and every play assertion on the branch pins
+// a pt-BR literal — so without this the English path (a per-language memoised instance, not a
+// `changeLanguage` call) is executed by nothing in CI, and the first developer to flip the toolbar
+// is the one who finds out. StatusPill is where it belongs: its labels are the whole component.
+//
+// In English the key IS the copy: `pt.json` is never consulted and `t('In production')` returns
+// the key itself. One assertion, and it is the whole contract — the same query on the pt default
+// finds 'Em produção' and throws, which is what makes it about the locale rather than about the
+// label. A second, negative "and 'Em produção' is gone" line would read well and could never fail:
+// the query above it has already decided it.
+export const PaidInEnglish: Story = {
+  args: { status: 'paid' },
+  globals: { locale: 'en' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('In production')).toBeInTheDocument()
+  },
 }
 ```
 
@@ -2035,8 +2169,23 @@ interface Props {
   disabled?: boolean
 }
 
+/**
+ * The focus indicator is a real `outline`, not the prototype's border-colour swap. Measured in
+ * Chromium, that swap left `outline-style: none` and only moved the 1px border from #1a1713 to
+ * #a63d20 — a hue-only signal at 2.81:1 between the unfocused and focused states, where WCAG 2.2
+ * asks for 3:1. A 2px accent outline held 2px off the control paints on paper (#f4f0e6) at 5.58:1
+ * and changes the control's footprint as well as its colour, so it no longer relies on hue alone.
+ * axe ships no rule for this, so only the `FocusRing` story keeps it honest.
+ *
+ * `outline-none` is deliberately ABSENT rather than merely unnecessary. Tailwind 4 compiles it to
+ * `--tw-outline-style: none`, and the `outline-2` width utility resolves its style from that same
+ * variable — so leaving it in place would silently cancel the very ring it sits next to.
+ *
+ * `disabled:opacity-40` matches Stepper. It is the affordance this prop lacked entirely: without
+ * it a disabled field was pixel-identical to an enabled one.
+ */
 const FIELD =
-  'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] outline-none focus:border-accent'
+  'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
 
 export function TextInput({ id, value, onChange, type = 'text', placeholder, error, disabled }: Props) {
   return (
@@ -2080,6 +2229,12 @@ interface Props {
  * to a screen reader: `aria-errormessage` names it, `aria-describedby` is the technique that gets
  * it announced (axe's aria-valid-attr-value rejects the former without the latter), and the `<p>`
  * carries the id both point at.
+ *
+ * The focus indicator mirrors TextInput too, and for the same measured reason: the border-colour
+ * swap alone was 2.81:1 between states with `outline-style: none`, under the 3:1 WCAG 2.2 asks
+ * for. The three text-entry controls share one ring — 2px accent, offset 2px, 5.58:1 on paper — so
+ * a form built out of them reads as one system. `outline-none` stays off the list on purpose:
+ * Tailwind 4 compiles it to `--tw-outline-style: none`, which the width utility would then inherit.
  */
 export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: Props) {
   return (
@@ -2092,7 +2247,7 @@ export function TextArea({ id, value, onChange, rows = 4, placeholder, error }: 
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
-        className={`font-mono border-ink w-full resize-y border bg-transparent px-3 py-3 text-[13px] leading-relaxed outline-none focus:border-accent ${error ? 'border-accent' : ''}`}
+        className={`font-mono border-ink w-full resize-y border bg-transparent px-3 py-3 text-[13px] leading-relaxed focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent ${error ? 'border-accent' : ''}`}
         onChange={(e) => onChange(e.target.value)}
       />
       {error && (
@@ -2115,12 +2270,18 @@ interface Props {
   options: { value: string; label: string }[]
 }
 
+/**
+ * Same focus ring as TextInput and TextArea — 2px accent, offset 2px, 5.58:1 against paper —
+ * because a checkout form mixes all three and a focus indicator that changes shape between
+ * controls is a worse signal than one that does not. See TextInput for the measurement and for
+ * why `outline-none` must not come back.
+ */
 export function Select({ id, value, onChange, options }: Props) {
   return (
     <select
       id={id}
       value={value}
-      className="font-mono border-ink w-full border bg-transparent px-3 py-3 text-[13px] outline-none focus:border-accent"
+      className="font-mono border-ink w-full border bg-transparent px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent"
       onChange={(e) => onChange(e.target.value)}
     >
       {options.map((o) => (
@@ -2395,6 +2556,84 @@ export const ErrorIsAnnounced: Story = {
     await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('E-mail inválido')
   },
 }
+
+// WCAG relative luminance, inline and deliberately. The assertion below has to be about a NUMBER:
+// "an outline exists" would happily pass the 1px hue-only signal this story was written to keep
+// out, and axe ships no rule for focus appearance, so nothing else in the suite is watching.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// The regression this exists to catch: the first implementation styled focus as
+// `outline-none focus:border-accent`, which left `outline-style: none` and moved only the 1px
+// border — 2.81:1 between states, under the 3:1 WCAG 2.2 asks for, and hue-only. Asserting the
+// outline is really painted AND that its colour clears 3:1 against the background MEASURED behind
+// it fails the moment either half is walked back, including by re-adding `outline-none` (Tailwind
+// 4 turns that into `--tw-outline-style: none`, which the width utility then resolves to).
+export const FocusRing: Story = {
+  args: { placeholder: 'E-mail' },
+  play: async ({ canvas }) => {
+    const input = canvas.getByPlaceholderText('E-mail')
+
+    input.blur()
+    const unfocused = getComputedStyle(input).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    input.focus()
+    const focused = getComputedStyle(input)
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = focused
+
+    await expect(input).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(input))).toBeGreaterThanOrEqual(3)
+  },
+}
+
+// `disabled` used to be a prop that lied: the component accepted it, `FIELD` styled nothing for
+// it, and no story rendered the combination — so a disabled field was pixel-identical to an
+// enabled one and axe never even looked at one. Asserting the computed opacity, not just the
+// attribute, is what makes the affordance itself non-optional.
+export const Disabled: Story = {
+  args: { value: 'marina@example.com', disabled: true },
+  play: async ({ canvas }) => {
+    const input = canvas.getByLabelText(LABEL)
+    await expect(input).toBeDisabled()
+    await expect(parseFloat(getComputedStyle(input).opacity)).toBeLessThan(1)
+  },
+}
 ```
 
 Create stories for `FieldLabel`, `TextArea`, `Select`, `ImageFrame` and `LangToggle` in the same shape: a `Default` story for each, plus `Select` asserting `onChange` fires with the chosen value via `userEvent.selectOptions`, `ImageFrame` with a `NoPhoto` story asserting the placeholder text renders, and `LangToggle` asserting `onToggle` fires. Keep every `play` to one behaviour.
@@ -2488,6 +2727,73 @@ export const WithError: Story = {
     await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('Escreva a mensagem')
   },
 }
+
+// WCAG relative luminance, inline and deliberately — the same arithmetic TextInput's FocusRing
+// story carries. The assertion has to be about a NUMBER: "an outline exists" would happily pass
+// the 1px hue-only signal this story exists to keep out. The helpers are duplicated rather than
+// shared because a CSF file cannot export a non-story without Storybook trying to render it.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// The regression this exists to catch is the one TextInput already guards: the first
+// implementation styled focus as `outline-none focus:border-accent`, which left
+// `outline-style: none` and moved only the 1px border — 2.81:1 between states, under the 3:1 WCAG
+// 2.2 SC 2.4.11 asks for, and hue-only. TextArea shares that ring, so it needs its own guard:
+// the shared FIELD string is not shared code, it is three copies, and a fix applied to one of
+// them is not applied to the others. Asserting the outline is really painted AND that its colour
+// clears 3:1 against the background MEASURED behind it fails the moment either half is walked
+// back, including by re-adding `outline-none` (Tailwind 4 turns that into
+// `--tw-outline-style: none`, which the width utility then resolves to).
+export const FocusRing: Story = {
+  play: async ({ canvas }) => {
+    const field = canvas.getByLabelText(LABEL)
+
+    field.blur()
+    const unfocused = getComputedStyle(field).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    field.focus()
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = getComputedStyle(field)
+
+    await expect(field).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(field))).toBeGreaterThanOrEqual(3)
+  },
+}
 ```
 
 Create `apps/web/src/ui/primitives/Select.stories.tsx`:
@@ -2537,6 +2843,75 @@ export const Default: Story = {
   play: async ({ canvas, args }) => {
     await userEvent.selectOptions(canvas.getByLabelText(LABEL), 'pac')
     await expect(args.onChange).toHaveBeenCalledWith('pac')
+  },
+}
+
+// WCAG relative luminance, inline and deliberately — the same arithmetic TextInput's FocusRing
+// story carries. The assertion has to be about a NUMBER: "an outline exists" would happily pass
+// the 1px hue-only signal this story exists to keep out. The helpers are duplicated rather than
+// shared because a CSF file cannot export a non-story without Storybook trying to render it.
+function luminance(color: string): number {
+  const [r, g, b] = color.match(/\d+/g)!.map(Number)
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
+// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
+// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
+// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
+// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
+// case where it was guaranteed to pass.
+function isOpaque(color: string): boolean {
+  const parts = color.match(/[\d.]+/g)
+  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
+}
+
+function surfaceBehind(element: Element): string {
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor
+    if (isOpaque(background)) return background
+  }
+  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
+  // background there is and pass no matter what the ring did.
+  throw new Error('nothing opaque behind the control to measure the focus ring against')
+}
+
+// Same guard as TextInput and TextArea, and NOT assumed to behave the same: this is a native
+// `<select>` with `appearance: auto`, which ships a UA focus ring of its own, so whether the
+// authored outline actually wins had to be measured rather than inferred. Measured in headless
+// Chromium: unfocused reports `outline-style: none` at the UA's inert 3px, focused reports
+// `rgb(166, 61, 32) solid 2px` at offset 2px — the authored ring paints, the UA one does not
+// come back.
+//
+// The regression it catches is the shared one: focus styled as `outline-none focus:border-accent`
+// left `outline-style: none` and moved only the 1px border — 2.81:1 between states, under the 3:1
+// WCAG 2.2 SC 2.4.11 asks for, and hue-only. The three controls repeat the utility string rather
+// than sharing it, so each one needs its own guard.
+export const FocusRing: Story = {
+  play: async ({ canvas }) => {
+    const select = canvas.getByLabelText(LABEL)
+
+    select.blur()
+    const unfocused = getComputedStyle(select).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    select.focus()
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = getComputedStyle(select)
+
+    await expect(select).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(outlineColor, surfaceBehind(select))).toBeGreaterThanOrEqual(3)
   },
 }
 ```
@@ -2696,3 +3071,288 @@ git commit -m "ci: install chromium and build storybook in the test job"
 - **Deferred to PR 3:** `LinkInterceptor`, the `app/` layer (containers, `useCart`, `useLang`, query hooks), shop and admin compound components, pages, and the `t()`-literal completeness scan.
 - **Type consistency:** `PublicProduct`, `AdminOrder`, `PublicOrder`, `CheckoutRequest`, `FieldErrors`, `TotalsLine`, `OrderStatus`, `formatPrice`, `ORDER_STATUSES` are used with the names `@shop/shared` actually exports (verified against `packages/shared/dist/index.d.ts`); `Lang` is `'pt' | 'en'` everywhere, matching `formatPrice`'s signature.
 - **Known risk, called out in the tasks:** three Storybook 10 API details (`setProjectAnnotations` entry point, `storybook/test` vs `@storybook/test`, `initialGlobals` vs `globalTypes.defaultValue`) have a stated fallback and a "report what you used" instruction rather than a silent guess.
+
+---
+
+## Closing wave (after the whole-branch review)
+
+Four commits landed after Task 11, from findings a per-task review structurally could not see. They
+are recorded here so the plan describes the branch that actually shipped.
+
+- `936a7ae` — **the anchor guard the spec required and this plan never mentioned.** spec:181 and
+  spec:227 both call for a preview decorator that `preventDefault()`s same-origin anchor clicks and
+  reports `action('navigate')(href)`. Task 5 rewrote `preview.tsx` and the clause fell between the
+  two tasks. Nothing was red, because the only anchor story asserted the `href` attribute instead of
+  clicking it — but the spec's own PR 3 play list has a story that clicks an order row, and a
+  `userEvent.click` on a real `<a href>` in the vitest browser project navigates the test page out
+  from under the runner. `action` lives at `storybook/actions` in Storybook 10.6 (verified against
+  the package exports map; `storybook/test` exports no `action`).
+- `349b845` — three more assertions that could not fail. `expect(contrast(outlineColor, PAPER))` sat
+  two lines after `expect(outlineColor).toBe(ACCENT)` with both colours as file-local literals, so
+  the contrast check was arithmetic over two constants and could only run when it was guaranteed to
+  pass. Contrast is now measured against the wrapper background read from the DOM, and the hue pin
+  that short-circuited it is gone. Two redundant fixture assertions collapsed into the exact-key
+  ones that already carried the load.
+- `e8bef75` — the copy-completeness scan named at spec:177, which did not exist. With
+  `fallbackLng: false` and English-sentence keys, a `t()` whose key is missing from `pt.json` renders
+  the English sentence to a Portuguese reader silently. Result: no missing keys; seven of seventeen
+  keys unused, six of them deliberately planted for PR 3 and `"Photo of {{name}}"` genuinely dead,
+  since `ImageFrame` takes `alt` as a prop. Nothing was added or deleted to make the test pass.
+- `40334ab` — one story with `globals: { locale: 'en' }`. The toolbar shipped a pt/en switch that no
+  test ever exercised, so the per-locale instance path never ran in CI and a developer flipping the
+  toolbar would have watched six stories fail in the interactions panel.
+
+The two files below are shown in their final form because the plan's earlier blocks for them are
+intermediate states, correct for the step that produced them: `preview.tsx` is built up across
+Tasks 1, 2 and 5, and `primitives/index.ts` grows from Task 9 to Task 10.
+
+Final `apps/web/.storybook/preview.tsx`:
+
+```tsx
+import type { MouseEvent, ReactNode } from 'react'
+import type { Preview } from '@storybook/react-vite'
+import { action } from 'storybook/actions'
+import { I18nextProvider } from 'react-i18next'
+import { type Lang, createCopyInstance } from '../src/copy/i18n'
+import '../src/index.css'
+
+// One initialised instance per language, created on first use. Swapping instances instead of
+// mutating a shared one means a story paints in the right language on its FIRST frame (an effect
+// would only fix it on the second) and no story can leak a language into the story after it.
+// `init()` completes synchronously here because the resources are inline and there is no backend
+// or async detector; if either is ever added, this has to be awaited before the first render.
+const instances = new Map<Lang, ReturnType<typeof createCopyInstance>>()
+
+function copyFor(locale: Lang) {
+  let instance = instances.get(locale)
+  if (!instance) {
+    instance = createCopyInstance(locale)
+    void instance.init()
+    instances.set(locale, instance)
+  }
+  return instance
+}
+
+// Storybook renders stories in its own iframe, so the fonts the app loads from index.html have
+// to be requested here as well.
+const fonts = document.createElement('link')
+fonts.rel = 'stylesheet'
+fonts.href =
+  'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,300;6..72,400&display=swap'
+document.head.appendChild(fonts)
+
+// Storybook has no router, so a real `<a href>` in a story is a live link. In the preview iframe a
+// click leaves the story; under the vitest browser project it navigates the RUNNER's own page out
+// from under itself, which is a hang or a torn-down suite rather than a red assertion. The spec
+// (line 181) makes this a global decorator, and it mirrors `LinkInterceptor`'s rule exactly: only
+// the click the router would own is cancelled — primary button, no modifier key, same origin, no
+// `target`, no `download`. Everything else falls through untouched, so cmd-click, middle-click,
+// "open in new tab", downloads, `mailto:` and external links keep their native behaviour.
+const navigate = action('navigate')
+
+function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  if (!(event.target instanceof Element)) return null
+  const anchor = event.target.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
+  // context, which is the browser's job and not the router's.
+  const target = anchor.getAttribute('target')
+  if (target && target !== '_self') return null
+  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
+  // non-HTTP scheme (`mailto:`, `tel:`) serialises to "null" and falls through on this line.
+  if (anchor.origin !== window.location.origin) return null
+  return anchor
+}
+
+function AnchorGuard({ children }: { children: ReactNode }) {
+  return (
+    // Capture phase, like the app's interceptor: the decision is made before any handler inside
+    // the story can see the click, so a component's own onClick still runs and still sees a
+    // cancelled event.
+    <div
+      onClickCapture={(event) => {
+        const anchor = interceptableAnchor(event)
+        if (!anchor) return
+        event.preventDefault()
+        // The same string `LinkInterceptor` hands to `navigate()`, so the actions panel shows the
+        // route the app would take rather than the raw (possibly relative) attribute.
+        navigate(anchor.pathname + anchor.search + anchor.hash)
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+const preview: Preview = {
+  parameters: {
+    controls: { expanded: true },
+    backgrounds: { disable: true },
+    // The a11y addon ships `test: 'todo'`, which reports violations in the panel but never fails
+    // a run. Wiring the addon into the vitest project is only half the job; this is the half that
+    // makes an axe violation a red test.
+    a11y: { test: 'error' },
+  },
+  globalTypes: {
+    locale: {
+      description: 'Copy language',
+      toolbar: {
+        icon: 'globe',
+        items: [
+          { value: 'pt', title: 'Português' },
+          { value: 'en', title: 'English' },
+        ],
+        dynamicTitle: true,
+      },
+    },
+  },
+  initialGlobals: { locale: 'pt' },
+  decorators: [
+    (Story, context) => {
+      const locale = (context.globals.locale as Lang) ?? 'pt'
+      return (
+        <I18nextProvider i18n={copyFor(locale)} defaultNS="translation">
+          <div className="bg-paper text-ink font-body p-6">
+            <Story />
+          </div>
+        </I18nextProvider>
+      )
+    },
+    (Story) => (
+      <AnchorGuard>
+        <Story />
+      </AnchorGuard>
+    ),
+  ],
+}
+
+export default preview
+```
+
+Final `apps/web/src/ui/primitives/index.ts`:
+
+```ts
+export * from './Eyebrow'
+export * from './FieldLabel'
+export * from './ImageFrame'
+export * from './LangToggle'
+export * from './PillButton'
+export * from './Price'
+export * from './RuledList'
+export * from './Select'
+export * from './Stat'
+export * from './StatusPill'
+export * from './Stepper'
+export * from './TextArea'
+export * from './TextInput'
+```
+
+Final `apps/web/src/ui/primitives/AnchorGuard.stories.tsx`:
+
+```tsx
+import { type ReactNode, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, userEvent } from 'storybook/test'
+
+// These stories test the PREVIEW DECORATOR, not a primitive — but every real `<a href>` in the UI
+// layer is rendered by a primitive, and the trap the decorator exists to defuse (a `userEvent.click`
+// on a live link navigating the vitest runner's own page) is sprung from a story file. The file
+// lives beside the components it protects for that reason.
+//
+// The harness reads `defaultPrevented` in the BUBBLE phase, which is the ground truth of the whole
+// feature: the preview's guard runs in the capture phase, so by the time this handler sees the
+// click the browser's decision has already been made, and this flag IS whether the page navigates.
+
+type Outcome = 'intercepted' | 'fell through'
+
+function Harness({ children }: { children: ReactNode }) {
+  const [log, setLog] = useState<string[]>([])
+  return (
+    <div
+      className="flex flex-col items-start gap-2"
+      onClick={(event) => {
+        const label = event.target instanceof HTMLElement ? (event.target.textContent ?? '?') : '?'
+        const outcome: Outcome = event.nativeEvent.defaultPrevented ? 'intercepted' : 'fell through'
+        setLog((entries) => [...entries, `${label}=${outcome}`])
+        // The net, and it is deliberate: a fall-through case really would navigate, and under the
+        // vitest browser project navigating means the runner loses the page it is testing in — a
+        // hang, not a red test. Recording the flag first and cancelling second keeps the failure
+        // mode an assertion.
+        event.preventDefault()
+      }}
+    >
+      {children}
+      <output data-testid="log" className="font-mono text-[11px]">
+        {log.join(' | ')}
+      </output>
+    </div>
+  )
+}
+
+const meta: Meta = { title: 'Storybook/Anchor guard' }
+export default meta
+type Story = StoryObj
+
+const HREF = '/exhibit/carta-de-marina?from=story#specs'
+
+export const SameOriginClickIsIntercepted: Story = {
+  render: () => (
+    <Harness>
+      <a href={HREF} className="underline">
+        same-origin
+      </a>
+    </Harness>
+  ),
+  play: async ({ canvas }) => {
+    const link = canvas.getByRole('link', { name: 'same-origin' })
+    await userEvent.click(link)
+
+    // The load-bearing half: the guard cancelled the click, which is what stops the navigation.
+    await expect(canvas.getByTestId('log')).toHaveTextContent('same-origin=intercepted')
+    // And the story is still the thing on screen — nothing replaced it.
+    await expect(link).toBeInTheDocument()
+  },
+}
+
+// Every case the browser owns, in one story. Each of these would be a bug if the guard swallowed
+// it: cmd-click and "open in new tab" are how people open a second product, `download` is how a
+// file is saved, and `mailto:` is the only way to reach Augusto in the whole design.
+export const BrowserOwnedClicksFallThrough: Story = {
+  render: () => (
+    <Harness>
+      <a href={HREF} className="underline">
+        modifier
+      </a>
+      <a href={HREF} target="_blank" rel="noreferrer" className="underline">
+        new-tab
+      </a>
+      <a href="/catalogo.pdf" download className="underline">
+        download
+      </a>
+      <a href="https://example.com/shop" rel="noreferrer" className="underline">
+        external
+      </a>
+      <a href="mailto:contato@augustoamaral.com" className="underline">
+        mailto
+      </a>
+    </Harness>
+  ),
+  play: async ({ canvas }) => {
+    // A session rather than the bare `userEvent.click`: the direct API resets keyboard state
+    // between calls, so the held Meta key has to live in one session to reach the click.
+    const user = userEvent.setup()
+    await user.keyboard('{Meta>}')
+    await user.click(canvas.getByRole('link', { name: 'modifier' }))
+    await user.keyboard('{/Meta}')
+
+    for (const name of ['new-tab', 'download', 'external', 'mailto']) {
+      await user.click(canvas.getByRole('link', { name }))
+    }
+
+    await expect(canvas.getByTestId('log')).toHaveTextContent(
+      'modifier=fell through | new-tab=fell through | download=fell through | external=fell through | mailto=fell through',
+    )
+  },
+}
+```
