@@ -246,9 +246,11 @@ git commit -m "feat(web): paper and ink design tokens with the prototype's fonts
 - Test: `apps/web/test/storage.test.ts`
 
 **Interfaces:**
-- Produces: `localStorage` and `sessionStorage` inside jsdom tests are the jsdom ones, on any Node version, so `npm test -w @shop/web` needs no special flags.
+- Produces: `localStorage` and `sessionStorage` work inside jsdom tests on any Node version, so `npm test -w @shop/web` needs no special flags.
 
 Background: Node 25+ ships a global Web Storage. In a jsdom environment that global shadows `window.localStorage`, and because it is inert unless Node was started with `--localstorage-file`, `localStorage.setItem` throws `TypeError: Cannot read properties of undefined`. This machine runs Node 26; CI runs Node 22 and never saw it.
+
+Amended 2026-09-09 after the first implementation attempt disproved this section's original fix. Two things were measured inside the running vitest jsdom environment: `globalThis === window` (so the original guard `globalThis[key] !== window[key]` compared `undefined` with itself and never fired), and the single shared `localStorage` property is Node's own `internal/webstorage` accessor rather than jsdom's — vitest's jsdom environment never got to install its `Storage`, so there is nothing on the window to point the globals back at. The property is `configurable: true`, so redefining it works; only the source value was missing. The fix therefore installs a small spec-shaped `Storage` instead of copying one, and stays behind a capability guard so CI on Node 22 keeps using jsdom's real implementation.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -285,13 +287,44 @@ Replace `apps/web/test/setup.ts` with:
 ```ts
 import '@testing-library/jest-dom/vitest'
 
-// Node 25+ exposes a global Web Storage that shadows jsdom's window.localStorage, and it is
-// inert unless Node was started with --localstorage-file, so `localStorage.setItem` throws.
-// Point the globals back at jsdom's storage so the tests and the code under test share one.
+// Node 25+ exposes a global Web Storage that shadows jsdom's, and it is inert unless node was
+// started with --localstorage-file: the getter returns undefined and every `localStorage.setItem`
+// throws. Inside the vitest jsdom environment `globalThis` IS the window, and the property it
+// carries is node's accessor, so there is no jsdom Storage left to point the globals back at.
+// Install a spec-shaped one instead. On node 22 (CI) the ambient storage works and the guard
+// below leaves jsdom's own implementation alone.
+class MemoryStorage {
+  #entries = new Map<string, string>()
+
+  get length(): number {
+    return this.#entries.size
+  }
+
+  key(index: number): string | null {
+    return Array.from(this.#entries.keys())[index] ?? null
+  }
+
+  getItem(key: string): string | null {
+    return this.#entries.get(String(key)) ?? null
+  }
+
+  setItem(key: string, value: string): void {
+    this.#entries.set(String(key), String(value))
+  }
+
+  removeItem(key: string): void {
+    this.#entries.delete(String(key))
+  }
+
+  clear(): void {
+    this.#entries.clear()
+  }
+}
+
 for (const key of ['localStorage', 'sessionStorage'] as const) {
-  if (typeof window !== 'undefined' && globalThis[key] !== window[key]) {
+  if (typeof globalThis[key]?.setItem !== 'function') {
     Object.defineProperty(globalThis, key, {
-      value: window[key],
+      value: new MemoryStorage(),
       configurable: true,
       writable: true,
     })
@@ -304,11 +337,14 @@ for (const key of ['localStorage', 'sessionStorage'] as const) {
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web`
 Expected: PASS, including the v1 suite that was failing on this machine (14 v1 tests + the 2 new ones), with no extra Node flags.
 
+Run: `npm run typecheck -w @shop/web` (or the repo's typecheck script)
+Expected: clean — `MemoryStorage` deliberately does not declare `implements Storage`, because the DOM `Storage` interface carries a string index signature a class cannot satisfy.
+
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/web/test/setup.ts apps/web/test/storage.test.ts
-git commit -m "fix(web): use jsdom storage when node exposes a global web storage"
+git commit -m "fix(web): working web storage in jsdom tests on node 25 and later"
 ```
 
 ---
