@@ -29,3 +29,26 @@ export const Disabled: Story = {
     await expect(canvas.getByRole('button', { name: 'Esgotado' })).toBeDisabled()
   },
 }
+
+// The story whose absence let a real defect ship green. `href` + `disabled` was never rendered by
+// any story, so axe never saw it and no play exercised it: the first implementation kept a real
+// `<a href>` and only added `pointer-events-none`, which stops the mouse and nothing else — Tab
+// reached it and Enter navigated. Everything below is about ONE property: disabled means inert.
+export const DisabledLink: Story = {
+  args: { children: 'Esgotado', href: '/', disabled: true },
+  play: async ({ canvas, args }) => {
+    const control = canvas.getByText('Esgotado')
+
+    // Unreachable by keyboard...
+    await userEvent.tab()
+    await expect(control).not.toHaveFocus()
+
+    // ...so it cannot be activated...
+    await userEvent.keyboard('{Enter}')
+    await expect(args.onClick).not.toHaveBeenCalled()
+
+    // ...and it does not advertise itself as a link it refuses to behave like.
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(control).toBeDisabled()
+  },
+}
