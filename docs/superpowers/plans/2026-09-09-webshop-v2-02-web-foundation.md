@@ -2289,7 +2289,7 @@ export const Default: Story = {
 export const Disabled: Story = { args: { disabled: true } }
 ```
 
-Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useArgs` so typing works):
+Create `apps/web/src/ui/primitives/TextInput.stories.tsx` (controlled through `useState` inside `render` — see the amendment note: `useArgs` does not re-render under the vitest browser project, so the assertion would be true by construction):
 
 ```tsx
 import { type ComponentProps, useState } from 'react'
@@ -2364,6 +2364,225 @@ export const ErrorIsAnnounced: Story = {
 ```
 
 Create stories for `FieldLabel`, `TextArea`, `Select`, `ImageFrame` and `LangToggle` in the same shape: a `Default` story for each, plus `Select` asserting `onChange` fires with the chosen value via `userEvent.selectOptions`, `ImageFrame` with a `NoPhoto` story asserting the placeholder text renders, and `LangToggle` asserting `onToggle` fires. Keep every `play` to one behaviour.
+
+Create `apps/web/src/ui/primitives/FieldLabel.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { TextInput } from './TextInput'
+
+// The label is rendered with the control it names. On its own it would prove nothing: `htmlFor`
+// is the whole contract of this primitive, and only a real control with the matching `id` shows
+// the association actually resolves.
+const meta = {
+  component: FieldLabel,
+  title: 'Primitives/FieldLabel',
+  args: { htmlFor: 'recipient', children: 'Nome de quem recebe' },
+  render: (args) => (
+    <div className="flex max-w-xs flex-col gap-2">
+      <FieldLabel {...args} />
+      <TextInput id={args.htmlFor} value="" onChange={() => {}} />
+    </div>
+  ),
+} satisfies Meta<typeof FieldLabel>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('Nome de quem recebe')).toBeInTheDocument()
+  },
+}
+
+export const WithHint: Story = {
+  args: { hint: '(opcional)' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('(opcional)')).toBeInTheDocument()
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/TextArea.stories.tsx`:
+
+```tsx
+import { type ComponentProps, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { TextArea } from './TextArea'
+
+const LABEL = 'Mensagem no cartão'
+
+const meta = {
+  component: TextArea,
+  title: 'Primitives/TextArea',
+  args: { id: 'note', value: '', onChange: fn() },
+  render: function Render(args: ComponentProps<typeof TextArea>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <TextArea
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
+  },
+} satisfies Meta<typeof TextArea>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  args: { placeholder: 'Mensagem no cartão' },
+  play: async ({ canvas }) => {
+    const field = canvas.getByPlaceholderText('Mensagem no cartão')
+    await userEvent.type(field, 'Feliz aniversário')
+    await expect(field).toHaveValue('Feliz aniversário')
+  },
+}
+
+export const WithError: Story = {
+  args: { value: '', error: 'Escreva a mensagem' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('Escreva a mensagem')
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/Select.stories.tsx`:
+
+```tsx
+import { type ComponentProps, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { Select } from './Select'
+
+const LABEL = 'Forma de envio'
+
+const OPTIONS = [
+  { value: 'sedex', label: 'Sedex' },
+  { value: 'pac', label: 'PAC' },
+  { value: 'retirada', label: 'Retirada' },
+]
+
+const meta = {
+  component: Select,
+  title: 'Primitives/Select',
+  args: { id: 'shipping', value: 'sedex', options: OPTIONS, onChange: fn() },
+  // Local state keeps the controlled select honest — React snaps the DOM value back otherwise —
+  // while `args.onChange` stays a spy, so the story can assert which value was picked.
+  render: function Render(args: ComponentProps<typeof Select>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <Select
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
+  },
+} satisfies Meta<typeof Select>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  play: async ({ canvas, args }) => {
+    await userEvent.selectOptions(canvas.getByLabelText(LABEL), 'pac')
+    await expect(args.onChange).toHaveBeenCalledWith('pac')
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/ImageFrame.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect } from 'storybook/test'
+import { ImageFrame } from './ImageFrame'
+
+// An inline data URI, not a file or a remote URL: the browser project must not depend on the
+// network or on an asset pipeline to decide whether this story passes.
+const SWATCH = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="100"><rect width="80" height="100" fill="#c9bfa6"/></svg>',
+)}`
+
+const meta = {
+  component: ImageFrame,
+  title: 'Primitives/ImageFrame',
+  args: { alt: 'Foto do vaso Cerrado' },
+  decorators: [
+    (Story) => (
+      <div className="w-60">
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Meta<typeof ImageFrame>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Default: Story = {
+  args: { src: SWATCH },
+  play: async ({ canvas, args }) => {
+    await expect(canvas.getByRole('img', { name: args.alt })).toBeInTheDocument()
+  },
+}
+
+export const NoPhoto: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('Ainda sem foto')).toBeInTheDocument()
+  },
+}
+```
+
+Create `apps/web/src/ui/primitives/LangToggle.stories.tsx`:
+
+```tsx
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { LangToggle } from './LangToggle'
+
+const meta = {
+  component: LangToggle,
+  title: 'Primitives/LangToggle',
+  args: { lang: 'pt', onToggle: fn() },
+} satisfies Meta<typeof LangToggle>
+export default meta
+type Story = StoryObj<typeof meta>
+
+// Queried by the TRANSLATED accessible name, which is the assertion that matters: the name used
+// to be a hardcoded "Switch to EN" and a Portuguese reader heard English. Finding the button by
+// its pt-BR name fails if the translation regresses or the key is dropped from pt.json.
+export const FromPortuguese: Story = {
+  play: async ({ canvas, args }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Mudar para inglês' }))
+    await expect(args.onToggle).toHaveBeenCalledTimes(1)
+  },
+}
+
+// The visible affordance stays the bare two-letter code even though the accessible name is a
+// full sentence — the code is the target language, not a word to translate.
+export const FromEnglish: Story = {
+  args: { lang: 'en' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('button', { name: 'Mudar para português' })).toHaveTextContent('pt')
+  },
+}
+```
 
 - [ ] **Step 3: Run both projects**
 
