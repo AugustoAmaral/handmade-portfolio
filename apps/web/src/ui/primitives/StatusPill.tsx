@@ -14,7 +14,7 @@ const TONE: Record<OrderStatus, string> = {
   paid: 'bg-ink text-paper',
   shipped: 'border border-ink',
   oversold: 'bg-accent text-paper',
-  expired: 'border border-ink/30 opacity-50',
+  expired: 'border border-ink/30 opacity-65',
 }
 
 export function StatusPill({ status }: { status: OrderStatus }) {
