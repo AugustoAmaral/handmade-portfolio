@@ -329,7 +329,6 @@ The v1 shipped this as a Context provider. It is a plain hook here, called once 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// apps/web/test/app/use-cart.test.ts
 import { CART_MAX_DISTINCT, CART_MAX_QTY } from '@shop/shared'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -343,7 +342,10 @@ describe('useCart', () => {
     act(() => result.current.add('a'))
     act(() => result.current.add('a'))
     act(() => result.current.add('b'))
-    expect(result.current.items).toEqual([{ slug: 'a', qty: 2 }, { slug: 'b', qty: 1 }])
+    expect(result.current.items).toEqual([
+      { slug: 'a', qty: 2 },
+      { slug: 'b', qty: 1 },
+    ])
     expect(result.current.count).toBe(3)
   })
 
@@ -361,6 +363,26 @@ describe('useCart', () => {
     act(() => result.current.add('a'))
     act(() => result.current.setQty('a', 0))
     expect(result.current.items).toEqual([])
+  })
+
+  it('sets a quantity directly and clamps it to CART_MAX_QTY', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.setQty('a', 3))
+    expect(result.current.items).toEqual([{ slug: 'a', qty: 3 }])
+
+    // `add` is not the only way past the cap. The drawer's stepper is the only caller today, but
+    // it passes a number, and a cart the checkout schema rejects is a checkout that 400s.
+    act(() => result.current.setQty('a', CART_MAX_QTY + 4))
+    expect(result.current.items[0]!.qty).toBe(CART_MAX_QTY)
+  })
+
+  it('removes only the named line', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.add('b'))
+    act(() => result.current.remove('a'))
+    expect(result.current.items).toEqual([{ slug: 'b', qty: 1 }])
   })
 
   it('persists to localStorage and reloads from it', () => {
@@ -386,6 +408,19 @@ describe('useCart', () => {
     expect(result.current.items).toEqual([])
   })
 
+  it('drops the stored entries that are not cart items and keeps the ones that are', () => {
+    // The array check above is not the same guard as the item check here, and only this shape
+    // separates them: it IS an array, so `Array.isArray` passes it and every malformed ELEMENT
+    // reaches a consumer that reads `line.qty`. Note an over-cap qty is dropped, not clamped —
+    // a stored line the checkout schema would reject is treated as corrupt, not as a big order.
+    localStorage.setItem(
+      'shop_cart',
+      JSON.stringify([{ slug: 'a', qty: 2 }, { nope: 1 }, 'x', null, { slug: 'c', qty: CART_MAX_QTY + 1 }]),
+    )
+    const { result } = renderHook(() => useCart())
+    expect(result.current.items).toEqual([{ slug: 'a', qty: 2 }])
+  })
+
   it('clears', () => {
     const { result } = renderHook(() => useCart())
     act(() => result.current.add('a'))
@@ -404,7 +439,6 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```ts
-// apps/web/src/app/state/useCart.ts
 import { CART_MAX_DISTINCT, CART_MAX_QTY, type CartItem, cartItemSchema } from '@shop/shared'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -412,13 +446,18 @@ const STORAGE_KEY = 'shop_cart'
 
 // Validated on read, not just parsed. The stored value is user-editable and survives deploys, so
 // a shape from an older version — or a hand-edited one — must degrade to an empty cart rather
-// than reach the UI as a half-formed line.
+// than reach the UI as a half-formed line. Both guards are load-bearing and neither implies the
+// other: `Array.isArray` rejects a stored object, the per-item schema rejects a bad element
+// inside a real array. An item the checkout schema would reject (over-cap qty) is dropped rather
+// than clamped — a cart that cannot be ordered is corrupt, not large.
 function load(): CartItem[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
     if (!Array.isArray(parsed)) return []
-    const items = parsed.map((item) => cartItemSchema.safeParse(item)).filter((r) => r.success)
-    return items.map((r) => r.data)
+    return parsed.flatMap((item) => {
+      const result = cartItemSchema.safeParse(item)
+      return result.success ? [result.data] : []
+    })
   } catch {
     return []
   }
@@ -466,7 +505,15 @@ export function useCart(): CartApi {
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Expected: PASS, 7 tests.
+Expected: PASS, 10 tests / 15 assertions.
+
+> **Amended after Task 2 shipped.** Both blocks are regenerated from the files as built, and the test count went from 7 to 10. Three changes, all found by the implementer:
+>
+> 1. **The draft's wrong-shape test did not prove what it claimed.** `localStorage.setItem('shop_cart', '{"slug":"a"}')` is rejected by `Array.isArray`, never reaching the per-item `safeParse` — so removing the schema validation alone left it green. The draft's own parenthetical predicted this and it happened anyway. The fix is a test with a REAL array full of junk (`{nope:1}`, `'x'`, `null`, an over-cap qty), which is the only input that distinguishes the two guards. **Generalise this: a mutation that removes two guards at once cannot tell you either one is load-bearing.**
+> 2. `remove()` was never called by any test, and only `add`'s cap was exercised, not `setQty`'s. Both were shipping uncovered.
+> 3. `load()` uses `flatMap` rather than `map/filter/map`. The draft's form does compile under TS 5.9's inferred type predicates, but it depends on that inference for its type safety: if it ever fails, `r.data` degrades to `CartItem | undefined` silently and the array gets holes. `flatMap` does not rely on it.
+>
+> **Decision recorded, not a bug:** an item whose stored qty exceeds `CART_MAX_QTY` is DROPPED, not clamped, because that is what `cartItemSchema` does and a cart the checkout would reject is corrupt rather than large. Clamping is one line if this ever bites.
 
 - [ ] **Step 5: Prove the assertions can fail**
 
