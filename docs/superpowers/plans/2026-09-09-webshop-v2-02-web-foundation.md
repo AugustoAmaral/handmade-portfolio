@@ -358,19 +358,33 @@ git commit -m "fix(web): working web storage in jsdom tests on node 25 and later
 
 **Interfaces:**
 - Consumes: `.storybook/main.ts`, `.storybook/preview.tsx` (Tasks 1–2).
-- Produces: `npm test -w @shop/web` runs both projects; `npm test -w @shop/web -- --project unit` and `--project storybook` run one.
+- Produces: `npm test -w @shop/web` runs both projects; `npm test -w @shop/web -- --project unit` runs the jsdom suite alone. Until the first story lands in Task 9, `--project storybook` alone resolves to zero test files and needs `--passWithNoTests` on the command line; from Task 9 on it works bare.
+
+Amended 2026-09-09, after the first implementation measured two things this section had assumed wrong.
+
+First: vitest's "no test files" check is run-level, not per-project. The full run passes because the `unit` project supplies files, but `--project storybook` on its own exits 1 while no stories exist. `passWithNoTests` is a `NonProjectOptions` entry in vitest 3.2.7, so it cannot be scoped to the storybook project — setting it would apply to the whole run and would silently green-light a vanished unit suite. It is therefore NOT set in the config; the interim selector passes the flag on the command line instead, and the need disappears at Task 9.
+
+Second: Storybook 10.6's vitest addon injects a virtual setup module that supplies the preview annotations of every addon in `main.ts` — but it skips that injection when it finds the literal `setProjectAnnotations` in a user setup file. A setup file that calls it manually with only `./preview` therefore silences `@storybook/addon-a11y` in the test runs, which defeats the accessibility half of the Storybook strategy. The setup file below composes the addon's annotations explicitly. `@storybook/addon-vitest` exports no `/preview` entry point and contributes none, so a11y plus the project preview is the complete set.
 
 - [ ] **Step 1: Write the Storybook test setup**
 
 Create `apps/web/.storybook/vitest.setup.ts`:
 
 ```ts
+import * as a11yAnnotations from '@storybook/addon-a11y/preview'
 import { setProjectAnnotations } from '@storybook/react-vite'
 import * as previewAnnotations from './preview'
 
-// Gives every story-as-test the decorators, parameters and globals from preview.tsx.
-setProjectAnnotations([previewAnnotations])
+// Gives every story-as-test the decorators, parameters and globals from preview.tsx, plus the
+// a11y addon's own annotations. Storybook's vitest addon would inject these itself, but it skips
+// that as soon as a setup file calls setProjectAnnotations — so anything listed in main.ts that
+// ships a `/preview` entry point has to be composed here by hand. Order matters: the project's
+// own preview goes last so it wins.
+setProjectAnnotations([a11yAnnotations, previewAnnotations])
 ```
+
+Storybook prints an info box on every run saying this file is obsolete. That is the same
+injection-skip described above, and it is expected as long as the file exists.
 
 If `setProjectAnnotations` is not exported from `@storybook/react-vite` in the installed version, check `node_modules/@storybook/react-vite/dist/index.d.ts` for the right entry point and use that; report what you used.
 
@@ -420,6 +434,8 @@ export default defineConfig({
 })
 ```
 
+No `passWithNoTests` anywhere — see the amendment note above.
+
 - [ ] **Step 3: Simplify the test script**
 
 In `apps/web/package.json`, replace the `test` script with:
@@ -432,13 +448,33 @@ The pool flags moved into the `unit` project above; passing them on the CLI woul
 
 - [ ] **Step 4: Verify both projects run**
 
-Run: `npx playwright install chromium` (only if not already installed on this machine).
+Chromium is already installed on this machine; run `npx playwright install chromium` only if a run reports it missing.
+
 Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web`
-Expected: the `unit` project runs the existing tests and passes; the `storybook` project starts a Chromium browser and reports no test files (there are no stories yet) without failing. If the storybook project errors instead of reporting zero tests, report the exact error — do not paper over it by removing the project.
+Expected: exit 0. The `unit` project runs the existing tests and passes; the `storybook` project contributes zero files and, because the run as a whole is not empty, is simply not reported. With no stories it never starts a browser.
+
+Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project unit`
+Expected: exit 0, the same jsdom tests.
+
+Run: `NODE_OPTIONS=--max-old-space-size=4096 npm test -w @shop/web -- --project storybook --passWithNoTests`
+Expected: exit 0 with `No test files found`. Without the flag this exits 1, which is correct behaviour and not a defect.
+
+- [ ] **Step 5: Prove the browser chain before handing it to Tasks 9–10**
+
+Zero stories means none of the browser path is exercised, so verify it with a throwaway story that is created, run, and deleted — it must NOT be committed, and `git status` must be clean afterwards.
+
+Write a minimal `apps/web/src/probe.stories.tsx` rendering one element, with a `play` function that asserts something about it, then run the storybook project against it and confirm:
+
+1. real headless Chromium starts through the Playwright provider and the story runs;
+2. the `preview.tsx` decorator reaches story-tests (assert on the `bg-paper` wrapper);
+3. `@storybook/addon-a11y` actually runs — this is what the amended setup file is for, so prove it rather than assume it;
+4. which import path works for `expect`/`userEvent` (`storybook/test` vs `@storybook/test`), and report it, because Task 9 depends on the answer.
+
+Then delete the probe file and report all four results.
 
 Check orphans afterwards: `ps ax -o pid,ppid,command | grep -i vitest | grep -v grep`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/web/vitest.config.ts apps/web/package.json apps/web/.storybook/vitest.setup.ts
