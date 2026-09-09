@@ -2,14 +2,22 @@ import { type ReactNode, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent } from 'storybook/test'
 
-// These stories test the PREVIEW DECORATOR, not a primitive — but every real `<a href>` in the UI
-// layer is rendered by a primitive, and the trap the decorator exists to defuse (a `userEvent.click`
-// on a live link navigating the vitest runner's own page) is sprung from a story file. The file
-// lives beside the components it protects for that reason.
+// These stories run the APP's own rule, not a copy of it. `interceptableAnchor` lives in
+// `src/app/anchors.ts` and is imported by both `LinkInterceptor` at the app root and the
+// `AnchorGuard` decorator in `.storybook/preview.tsx`, so this file is the only place the shipped
+// rule meets a real browser — real modifier keys, a real `download` attribute, a real `mailto:` —
+// instead of jsdom's approximation of one. `test/app/link-interceptor.test.tsx` pins the same rule
+// in jsdom; break `anchors.ts` and the two go red together, which is the whole reason the rule is
+// shared. Task 4 came within one review of shipping four differences between the two copies, and
+// no test in either project could have seen a single one of them.
+//
+// The file sits beside the primitives because every real `<a href>` in the UI layer is rendered by
+// one, and the trap the decorator exists to defuse — a `userEvent.click` on a live link navigating
+// the vitest runner's own page out from under it — is sprung from a story file.
 //
 // The harness reads `defaultPrevented` in the BUBBLE phase, which is the ground truth of the whole
-// feature: the preview's guard runs in the capture phase, so by the time this handler sees the
-// click the browser's decision has already been made, and this flag IS whether the page navigates.
+// feature: the guard runs in the capture phase, so by the time this handler sees the click the
+// browser's decision has already been made, and this flag IS whether the page navigates.
 
 type Outcome = 'intercepted' | 'fell through'
 
