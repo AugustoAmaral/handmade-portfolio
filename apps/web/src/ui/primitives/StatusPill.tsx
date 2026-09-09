@@ -18,7 +18,11 @@ const TONE: Record<OrderStatus, string> = {
   paid: 'bg-ink text-paper',
   shipped: 'border border-ink',
   oversold: 'bg-accent text-paper',
-  expired: 'border border-ink/30 opacity-65',
+  // Dashed, not merely fainter. `pending` and `expired` are both "outlined pill with muted text",
+  // and once the contrast fix lifted `expired` to opacity-65 the two sat at 6.23:1 and 5.26:1
+  // against paper — a gap nobody reads as a hierarchy. The border STYLE carries the distinction
+  // instead, so it survives whatever the opacities become and does not lean on hue either.
+  expired: 'border border-dashed border-ink/40 opacity-65',
 }
 
 export function StatusPill({ status }: { status: OrderStatus }) {

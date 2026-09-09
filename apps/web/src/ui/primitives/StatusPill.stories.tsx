@@ -49,3 +49,24 @@ export const PaidInEnglish: Story = {
     await expect(canvas.getByText('In production')).toBeInTheDocument()
   },
 }
+
+// The hierarchy the dashed border exists to restore, asserted on the two pills TOGETHER. Pinning
+// `expired` to dashed on its own would still pass the day someone makes `pending` dashed too —
+// which is precisely the regression this guards, since the whole point is that the two must not
+// read alike. Comparing them is what makes the assertion about the distinction rather than about
+// one class name.
+export const ExpiredIsDistinctFromPending: Story = {
+  render: () => (
+    <div className="flex gap-2">
+      <StatusPill status="pending" />
+      <StatusPill status="expired" />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    const pending = getComputedStyle(canvas.getByText('Aguardando pagamento'))
+    const expired = getComputedStyle(canvas.getByText('Expirado'))
+
+    await expect(expired.borderStyle).toBe('dashed')
+    await expect(pending.borderStyle).not.toBe(expired.borderStyle)
+  },
+}
