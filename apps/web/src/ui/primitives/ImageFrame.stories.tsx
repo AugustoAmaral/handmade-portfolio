@@ -26,7 +26,23 @@ type Story = StoryObj<typeof meta>
 export const Default: Story = {
   args: { src: SWATCH },
   play: async ({ canvas, args }) => {
-    await expect(canvas.getByRole('img', { name: args.alt })).toBeInTheDocument()
+    const img = canvas.getByRole('img', { name: args.alt })
+    await expect(img).toBeInTheDocument()
+    // The other half of `Contain` below. `fit` is one ternary, and a ternary is only guarded when
+    // both of its branches are somebody's assertion: force it either way and exactly one of these
+    // two stories goes red.
+    await expect(getComputedStyle(img).objectFit).toBe('cover')
+  },
+}
+
+// The gallery's main slot, added in Task 7. `object-contain` is the prototype's own choice for the
+// large product view — cropping a drawing to fill a 4/5 box removes part of what is being sold —
+// and it is a computed style with no visible text, so nothing else in the suite would notice it
+// quietly reverting to `cover`.
+export const Contain: Story = {
+  args: { src: SWATCH, fit: 'contain' },
+  play: async ({ canvas, args }) => {
+    await expect(getComputedStyle(canvas.getByRole('img', { name: args.alt })).objectFit).toBe('contain')
   },
 }
 

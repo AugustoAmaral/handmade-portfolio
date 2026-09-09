@@ -46,5 +46,8 @@
   "I write, draw, pack and post. I also wrote the cart, the payment integration and this page.": "Eu escrevo, desenho, embalo e despacho. Também escrevi o carrinho, a integração de pagamento e esta página.",
   "If what you need is the second part,": "Se o que você precisa é a segunda parte,",
   "send me a message": "me manda uma mensagem",
-  "Message from the site": "Mensagem pelo site"
+  "Message from the site": "Mensagem pelo site",
+  "Show photo {{index}}": "Ver foto {{index}}",
+  "Show photo {{index}}: {{description}}": "Ver foto {{index}}: {{description}}",
+  "No specs listed for this piece.": "Sem ficha técnica para esta peça."
 }
