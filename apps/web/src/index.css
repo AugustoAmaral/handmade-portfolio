@@ -12,4 +12,9 @@
   --font-display: 'Instrument Serif', Georgia, serif;
   --font-body: Newsreader, Georgia, serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* The page gutter. `clamp(20px,5vw,64px)` is the horizontal padding of every full-width band
+     in the prototype, where it appears verbatim six times. Named here so it is one edit, and so
+     `px-gutter` reads as a decision instead of an arbitrary value. */
+  --spacing-gutter: clamp(20px, 5vw, 64px);
 }

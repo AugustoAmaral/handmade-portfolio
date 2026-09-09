@@ -3,8 +3,11 @@
   "Your bag is empty.": "A sacola está vazia.",
   "Ship to: Brazil": "Enviar para: Brasil",
   "{{count}} in stock": "{{count}} em estoque",
+  "Quantity": "Quantidade",
+  "Quantity of {{name}}": "Quantidade de {{name}}",
   "Decrease quantity": "Diminuir quantidade",
   "Increase quantity": "Aumentar quantidade",
+  "Maximum {{max}} per item.": "Máximo de {{max}} por peça.",
   "Awaiting payment": "Aguardando pagamento",
   "In production": "Em produção",
   "Shipped": "Enviado",
@@ -15,5 +18,15 @@
   "Photo of {{name}}": "Foto de {{name}}",
   "No photo yet": "Ainda sem foto",
   "Switch to English": "Mudar para inglês",
-  "Switch to Portuguese": "Mudar para português"
+  "Switch to Portuguese": "Mudar para português",
+  "Shop": "Loja",
+  "About": "Sobre",
+  "Bag ({{count}})": "Sacola ({{count}})",
+  "Your bag": "Sua sacola",
+  "Close the bag": "Fechar a sacola",
+  "Subtotal": "Subtotal",
+  "Shipping": "Frete",
+  "Calculated at checkout": "Calculado no pagamento",
+  "Total": "Total",
+  "Go to payment": "Ir para o pagamento"
 }
