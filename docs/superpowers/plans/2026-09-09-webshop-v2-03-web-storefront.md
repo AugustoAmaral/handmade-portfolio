@@ -30,7 +30,7 @@ One finding from the extraction reshapes those tasks: **the prototype contains z
   - `region` **NEVER fires.** `@storybook/addon-a11y` ships `DISABLED_RULES = ["region"]` with the comment *"In component testing, landmarks are not always present and the rule check can cause false positives"*. Do not design markup to satisfy it.
   - `page-has-heading-one`, `landmark-one-main` and `bypass` **never fire either**: their selector is `html:not(html *)` and the addon runs against `document.body`.
   - `heading-order` cannot fire on a story with a single heading — axe returns true at index 0. It needs three headings to trigger.
-  - What DOES fire and has already caught real defects: `color-contrast`, `button-name`, `aria-dialog-name`, `listitem`, and `landmark-unique` (only once a second unnamed landmark of the same type exists).
+  - What DOES fire and has already caught real defects: `color-contrast`, `button-name`, `aria-dialog-name`, `listitem`, and `landmark-unique` (only once a second unnamed landmark of the same type exists), and `landmark-no-duplicate-main`, which fires alongside it on a second `<main>` — note this is NOT `landmark-one-main`, which stays dead.
   - **Known blind spot:** `color-contrast` SKIPS single-character text, treating it as a suspected icon ligature. A one-glyph element passes at any contrast. Task 5 probed this across opacity, font size and `aria-hidden`. Judge such elements on the merits; the gate is not watching.
 - **Contrast floors, measured not eyeballed:** 4.5:1 for normal text, 3:1 for text ≥24px and for focus indicators (WCAG 2.2 SC 2.4.11). PR 2 had to raise three opacities and rewrite the focus ring for exactly this. Muted text below `opacity-65` on paper does not clear AA.
 - **`test/ui-boundaries.test.ts` scans RAW SOURCE, comments included.** A doc comment that merely mentions `useState`, `useEffect`, `useRef`, `window.` or `localStorage` fails the purity test, even when the code does nothing of the kind. Task 5 hit this writing a comment explaining WHY the drawer has no focus trap. (`copy.test.ts` strips comments; this one does not.) Phrase such comments around the constraint rather than the API name.
@@ -1532,6 +1532,16 @@ Owns `useCart`, `useLang`, and `drawerOpen`. Opens the drawer on add-to-cart and
 - [ ] **Step 1b: Decide `selectedPhoto`'s clamping contract** (raised by Task 7, which owns the component but not the state)
 
 `ProductRoute` holds the selection and react-router keeps the component mounted across slug changes, so an index the new product has no photo for is reachable in normal use. `ProductGallery` degrades to the placeholder rather than throwing — but a stale index silently shows "no photo" over a product that has photos. Reset on product change, or clamp; decide, implement, and pin it with a test that navigates between two products with different photo counts.
+
+- [ ] **Step 1c: Restore Enter-to-submit on the checkout** (raised by Task 10)
+
+Task 10 established there is **no Enter-to-submit** on this checkout, and the reasoning is sound: the submit control lives in the other grid column inside `OrderSummaryPanel`, so a `<form>` wrapping the fields would contain no submit button, and HTML's implicit-submission rule needs one (or a single blocking field). With sixteen inputs, Enter does nothing today. That is a real usability defect on the highest-stakes screen in the shop, and it is not acceptable to ship it silently.
+
+**The fix is the HTML `form` attribute**, which associates a control with a form it is not nested in: `<form id="checkout" onSubmit={…}>` around the sections, and the panel's button rendering `form="checkout" type="submit"`. That needs one prop on `OrderSummaryPanel` (`submitFormId?: string`, defaulting to today's `type="button"` behaviour so its existing stories are unaffected). Implement it, and pin it with a test that presses Enter in a text field and asserts the submit handler fired — a story asserting the attribute exists would pass on a form id that matches nothing.
+
+- [ ] **Step 1d: Decide whether the checkout pre-fills `BR`** (raised by Task 10)
+
+`CheckoutPage/EmptyForm` renders with country `''`, so `shippingOptionsFor('')` returns `[]` and the empty-options branch shows. A shop that ships from Brazil and states "Envio para todo o Brasil" on its home page plausibly defaults the country. Decide, and note that pre-filling changes which validation errors a first-time submit produces.
 
 - [ ] **Step 2: `CheckoutRoute` — the one with real logic**
 
