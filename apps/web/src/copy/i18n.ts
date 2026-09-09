@@ -29,3 +29,8 @@ export function createCopyInstance(lang: Lang = 'pt'): I18n {
 }
 
 export const copyI18n = createCopyInstance('pt')
+
+// Initialised on creation: an exported-but-uninitialised instance is a trap, because `t()` on it
+// returns undefined silently rather than throwing. Synchronous here — inline resources, no
+// backend, no async detector.
+void copyI18n.init()
