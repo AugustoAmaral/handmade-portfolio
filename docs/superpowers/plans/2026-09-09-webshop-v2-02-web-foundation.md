@@ -1550,6 +1550,11 @@ const SPECIFIER_PATTERNS = [
   /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ]
 
+// The layer is stateless by design — state and effects live in `src/app`. The import allowlist
+// does not catch this on its own, because `react` is legitimately allowed: a primitive could
+// import `useState` from it and pass every other check.
+const FORBIDDEN_HOOKS = [/\buseState\b/, /\buseReducer\b/, /\buseEffect\b/, /\buseLayoutEffect\b/, /\buseRef\b/]
+
 const FORBIDDEN_GLOBALS = [/\bwindow\./, /\bdocument\./, /\blocalStorage\b/, /\bsessionStorage\b/, /\bfetch\(/]
 
 // Stories are exempt on purpose: they import the storybook packages by necessity, and they are
@@ -1585,6 +1590,13 @@ describe('ui layer boundaries', () => {
     const source = readFileSync(file, 'utf8')
     for (const specifier of specifiersOf(source)) {
       expect(isAllowed(specifier, file), `${specifier} is not allowed in src/ui`).toBe(true)
+    }
+  })
+
+  it.each(files.map((f) => [path.relative(UI_DIR, f), f]))('%s holds no state', (_name, file) => {
+    const source = readFileSync(file, 'utf8')
+    for (const pattern of FORBIDDEN_HOOKS) {
+      expect(pattern.test(source), `${pattern} is not allowed in src/ui`).toBe(false)
     }
   })
 
@@ -1892,6 +1904,21 @@ exercise it, because the suite was green over this defect: no story rendered a d
 sentences rather than one interpolated key, which is the point of using English sentences as keys.
 The visible affordance stays the two-letter code.
 
+**Every focusable control needs a focus indicator that meets WCAG 2.2 SC 2.4.11.** The approved
+prototype styles text entry as `outline: none` plus a border-colour change on focus, and the first
+implementation reproduced that faithfully. Measured, it fails: the only change is the 1px border
+going `#1a1713` -> `#a63d20`, which is 2.81:1 against the unfocused state where 3:1 is required,
+and it is a hue-only signal. axe ships no rule for 2.4.11, so the gate is green over it — this is a
+defect the test suite cannot catch, and PR 3 builds the checkout forms on these controls. Give
+`TextInput`, `TextArea` and `Select` a real focus ring that meets 3:1, keeping the accent colour as
+the design intends, and report the before/after so the design change stays visible and reversible.
+
+**A prop with no visual affordance and no story is a prop that lies.** `TextInput` accepts
+`disabled` but styles nothing for it, so a disabled input is pixel-identical to an enabled one, and
+no story renders the combination, so axe never inspects it. This is the same hole that let the
+disabled `PillButton` ship operable. Give it the affordance its siblings have (`Stepper` uses
+`disabled:opacity-40`, `PillButton` `opacity-50`) and a story that renders it.
+
 **Do not use `useArgs` from `storybook/preview-api` for controlled-input stories.** Under the vitest
 browser project there is no manager to service `updateArgs`, so the value never changes. Hold the
 value in `useState` inside the story's `render` instead.
@@ -1905,7 +1932,7 @@ because nothing ever happened. Both are wrong; only the second is invisible.
 
 **Files:**
 - Create: `apps/web/src/ui/primitives/PillButton.tsx`, `FieldLabel.tsx`, `TextInput.tsx`, `TextArea.tsx`, `Select.tsx`, `Stepper.tsx`, `ImageFrame.tsx`, `LangToggle.tsx`, plus a `*.stories.tsx` beside each
-- Modify: `apps/web/src/ui/primitives/index.ts`
+- Modify: `apps/web/src/ui/primitives/index.ts`, `apps/web/src/copy/pt.json` (the two `LangToggle` keys only)
 
 **Interfaces:**
 - Produces:
