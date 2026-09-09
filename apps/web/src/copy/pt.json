@@ -1,0 +1,17 @@
+{
+  "Add to bag": "Colocar na sacola",
+  "Your bag is empty.": "A sacola está vazia.",
+  "Ship to: Brazil": "Enviar para: Brasil",
+  "{{count}} in stock": "{{count}} em estoque",
+  "Decrease quantity": "Diminuir quantidade",
+  "Increase quantity": "Aumentar quantidade",
+  "Awaiting payment": "Aguardando pagamento",
+  "In production": "Em produção",
+  "Shipped": "Despachado",
+  "Out of stock": "Estoque insuficiente",
+  "Expired": "Expirado",
+  "Made to order": "Sob encomenda",
+  "Sold out": "Esgotado",
+  "Photo of {{name}}": "Foto de {{name}}",
+  "No photo yet": "Sem foto ainda"
+}
