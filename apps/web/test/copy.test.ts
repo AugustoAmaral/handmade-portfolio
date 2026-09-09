@@ -1,3 +1,4 @@
+import { getI18n } from 'react-i18next'
 import { describe, expect, it } from 'vitest'
 import pt from '../src/copy/pt.json'
 import { createCopyInstance } from '../src/copy/i18n'
@@ -27,6 +28,31 @@ describe('copy instance', () => {
     const i18n = createCopyInstance('en')
     await i18n.init()
     expect(i18n.t('{{count}} in stock', { count: 3 })).toBe('3 in stock')
+  })
+
+  it('does not split a colon key that has no spaces', async () => {
+    // The two assertions above pass even with the separators left at their defaults, because
+    // i18next only auto-detects "natural language" keys when they contain spaces. This is the
+    // shape that actually proves nsSeparator is off: without it, i18next reads `checkout` as a
+    // namespace and renders `title`.
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.t('checkout:title')).toBe('checkout:title')
+  })
+
+  it('has both separators disabled in its resolved options', async () => {
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.options.keySeparator).toBe(false)
+    expect(i18n.options.nsSeparator).toBe(false)
+  })
+
+  it("never becomes react-i18next's default instance", async () => {
+    // Guards the reason initReactI18next is not wired in: whichever instance inits last would
+    // own every bare useTranslation() call in the app, including v1's dotted keys.
+    const i18n = createCopyInstance('pt')
+    await i18n.init()
+    expect(getI18n()).toBeUndefined()
   })
 
   it('has no empty translations in pt.json', () => {

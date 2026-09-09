@@ -7,11 +7,11 @@
   "Increase quantity": "Aumentar quantidade",
   "Awaiting payment": "Aguardando pagamento",
   "In production": "Em produção",
-  "Shipped": "Despachado",
-  "Out of stock": "Estoque insuficiente",
+  "Shipped": "Enviado",
+  "Insufficient stock": "Estoque insuficiente",
   "Expired": "Expirado",
   "Made to order": "Sob encomenda",
   "Sold out": "Esgotado",
   "Photo of {{name}}": "Foto de {{name}}",
-  "No photo yet": "Sem foto ainda"
+  "No photo yet": "Ainda sem foto"
 }

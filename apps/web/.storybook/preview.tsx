@@ -1,14 +1,24 @@
 import type { Preview } from '@storybook/react-vite'
-import { useEffect } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { copyI18n } from '../src/copy/i18n'
+import { type Lang, createCopyInstance } from '../src/copy/i18n'
 import '../src/index.css'
 
-// The instance is created by `createInstance` but not initialised by it. Until `init()` runs,
-// `t()` returns undefined and `changeLanguage()` throws, so this has to happen before the first
-// story renders. With inline resources and no backend, `init()` completes synchronously, so
-// there is nothing to await here.
-void copyI18n.init()
+// One initialised instance per language, created on first use. Swapping instances instead of
+// mutating a shared one means a story paints in the right language on its FIRST frame (an effect
+// would only fix it on the second) and no story can leak a language into the story after it.
+// `init()` completes synchronously here because the resources are inline and there is no backend
+// or async detector; if either is ever added, this has to be awaited before the first render.
+const instances = new Map<Lang, ReturnType<typeof createCopyInstance>>()
+
+function copyFor(locale: Lang) {
+  let instance = instances.get(locale)
+  if (!instance) {
+    instance = createCopyInstance(locale)
+    void instance.init()
+    instances.set(locale, instance)
+  }
+  return instance
+}
 
 // Storybook renders stories in its own iframe, so the fonts the app loads from index.html have
 // to be requested here as well.
@@ -43,12 +53,9 @@ const preview: Preview = {
   initialGlobals: { locale: 'pt' },
   decorators: [
     (Story, context) => {
-      const locale = (context.globals.locale as 'pt' | 'en') ?? 'pt'
-      useEffect(() => {
-        void copyI18n.changeLanguage(locale)
-      }, [locale])
+      const locale = (context.globals.locale as Lang) ?? 'pt'
       return (
-        <I18nextProvider i18n={copyI18n} defaultNS="translation">
+        <I18nextProvider i18n={copyFor(locale)} defaultNS="translation">
           <div className="bg-paper text-ink font-body p-6">
             <Story />
           </div>
