@@ -114,6 +114,11 @@ describe('fixtures', () => {
   })
 
   it('exposes the checkout errors the API can really send', () => {
+    // Two exact key lists, and nothing else. The rules never key on the buyer — a buyer error
+    // arrives from the zod path instead, in its own response, which is what `buyerCheckoutErrors`
+    // is for — and both halves of that sentence are already stated by the lists below. The
+    // `startsWith('buyer')` guards that used to sit beside them could not fail: each one was
+    // decided by the exact-key assertion on the line above it.
     expect(Object.keys(brCheckoutErrors).sort()).toEqual([
       'shippingAddress.district',
       'shippingAddress.number',
@@ -121,11 +126,7 @@ describe('fixtures', () => {
       'shippingAddress.state',
       'shippingMethod',
     ])
-    // The rules never key on the buyer; a buyer error arrives from the zod path instead, in its
-    // own response, which is what `buyerCheckoutErrors` is for.
-    expect(Object.keys(brCheckoutErrors).filter((k) => k.startsWith('buyer'))).toEqual([])
     expect(Object.keys(buyerCheckoutErrors).sort()).toEqual(['buyer.email', 'buyer.name'])
-    expect(Object.keys(buyerCheckoutErrors).every((k) => k.startsWith('buyer'))).toBe(true)
   })
 
   it('freezes the fixtures so one story cannot corrupt another', () => {
