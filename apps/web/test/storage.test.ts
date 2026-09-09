@@ -8,7 +8,7 @@ describe('jsdom storage', () => {
     expect(localStorage.getItem('probe')).toBeNull()
   })
 
-  it('shares one storage between globalThis and window', () => {
+  it('works when reached through window, the way the i18n detector reads it', () => {
     window.localStorage.setItem('shared', '1')
     expect(localStorage.getItem('shared')).toBe('1')
     localStorage.clear()
