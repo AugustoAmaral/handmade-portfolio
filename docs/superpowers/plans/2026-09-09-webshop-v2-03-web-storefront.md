@@ -1432,7 +1432,7 @@ Use `TextInput`'s `error` prop, which PR 2 already wired to `aria-errormessage` 
 
 - [ ] **Step 4: Stories — the states the design never drew**
 
-`CheckoutBuyerSection`: empty, filled, with errors on every field. `CheckoutAddressSection`: BR empty, BR filled, international filled, with errors. `CheckoutShippingSection`: BR (PAC and SEDEX), international (one option), none selected with a `required` error. `OrderSummaryPanel`: normal, submitting (button disabled and labelled as busy), `submitError` set, empty cart.
+`CheckoutBuyerSection`: empty, filled, with errors on every field. `CheckoutAddressSection`: BR empty, BR filled, international filled, with errors. `CheckoutShippingSection`: BR (PAC and SEDEX), international (one option), none selected with a `required` error. `OrderSummaryPanel`: normal, submitting (button disabled, with the busy state in a `role="status"` line — **not** by renaming the button, which contradicts the story's own `getByRole({ name: /pagar/i })` query and takes away the name a voice-control user asks for), `submitError` set, empty cart, and **empty shipping options** — `shippingOptionsFor('ZW')` returns `[]`, which is reachable and renders a 1px ink rectangle containing nothing.
 
 ```tsx
 export const CountryDrivesTheFields: Story = {
@@ -1445,10 +1445,15 @@ export const CountryDrivesTheFields: Story = {
 
 export const SubmittingDisablesTheButton: Story = {
   args: { submitting: true, onSubmit: fn() },
-  play: async ({ args, canvas, userEvent }) => {
+  play: async ({ args, canvas }) => {
     const button = canvas.getByRole('button', { name: /pagar/i })
     await expect(button).toBeDisabled()
-    await userEvent.click(button)
+    // ⚠️ NOT `userEvent.click`. `PillButton` paints `pointer-events-none` on a disabled control,
+    // so userEvent THROWS ("Unable to perform pointer interaction") before reaching the assertion
+    // below — the draft's version is red on correct code and red on broken code alike. A raw
+    // `.click()` is what distinguishes them: the browser refuses to dispatch it to a disabled
+    // button and would dispatch it to an enabled one.
+    button.click()
     // Double-submitting a checkout creates two pending orders and two Stripe sessions.
     await expect(args.onSubmit).not.toHaveBeenCalled()
   },
@@ -1472,6 +1477,10 @@ git commit -m "feat(web): add the checkout sections and order summary"
 Pages are pure compositions: they take fully-resolved props and render components. No data fetching, no state, no routing. This is what makes a full-page Storybook possible without a single mock, which is the thing Augusto asked for.
 
 **Interfaces — produced:** each page takes the union of what its components need, plus `lang`. `ShopShell` takes `header` props, `drawer` props and `children`.
+
+- [ ] **Step 0a: Decide whether `CartLineData` gains a `type`** (raised by Task 9)
+
+The prototype's summary line reads `{{qty}} × {{unit}} · {{type}}` (`físico` / `digital`). `CartLineData` has no `type`, so the last third is not expressible; adding one edits Task 5's view model and the `lineOf` derivation built on it. Either add it and render the full line, or drop that third deliberately and say so — do not leave the summary silently two-thirds of the design.
 
 - [ ] **Step 0: Build the two components the file map forgot** (raised by Task 8)
 
