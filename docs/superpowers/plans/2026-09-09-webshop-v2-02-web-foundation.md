@@ -513,13 +513,24 @@ git commit -m "chore(web): vitest projects for jsdom units and browser stories"
 - Test: `apps/web/test/copy.test.ts`
 
 **Interfaces:**
-- Produces: `createCopyInstance()` and the default `copyI18n` export from `src/copy/i18n.ts`; a Storybook toolbar global `locale` (`en` | `pt`) that switches the instance's language.
+- Produces: `createCopyInstance()` and the default `copyI18n` export from `src/copy/i18n.ts`; a Storybook toolbar global `locale` (`en` | `pt`) that selects which initialised instance the decorator provides.
+
+Amended 2026-09-09 after review, on three measured findings.
+
+`initReactI18next` is no longer registered. The plugin's `init(instance)` calls react-i18next's `setI18n`, which writes a module-level default; since i18next runs external modules during `init()`, whichever instance initialises LAST owns every bare `useTranslation()` in the app. Proved by probe: react-i18next's default was the v1 singleton before `copyI18n.init()` and this instance after it, and no file under `apps/web/src` uses `I18nextProvider`, so v1 would have rendered raw `nav.about`-style keys. The decorator provides the instance explicitly and `useTranslation` reads props → context → default, so nothing needs the global. Task 8's boundary test also gained `../i18n` to keep `src/ui` from importing the v1 singleton and re-triggering this from inside the Storybook iframe.
+
+The decorator keeps one initialised instance per language instead of calling `changeLanguage` in an effect. The effect version was measured painting the previous language for one commit before switching, which is invisible today only because `initialGlobals.locale` and the instance's own language agree; it would surface the moment a story sets `globals: { locale: 'en' }`, and the story rendering after it would inherit the flip through the shared instance.
+
+Two of the copy assertions were vacuous: i18next 24 only splits keys it does not consider "natural language", so a key with spaces survives even with the separators at their defaults. The test now asserts the resolved options directly and uses a colon key with no spaces, which is the shape that actually fails when `nsSeparator` is on.
+
+Note for PR 3: the app root must wrap the tree in `I18nextProvider` with an initialised instance, exactly as this decorator does. There is no global default to fall back on any more, and that is deliberate — a missing provider fails loudly instead of silently resolving against whatever initialised last.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `apps/web/test/copy.test.ts`:
 
 ```ts
+import { getI18n } from 'react-i18next'
 import { describe, expect, it } from 'vitest'
 import pt from '../src/copy/pt.json'
 import { createCopyInstance } from '../src/copy/i18n'
@@ -551,6 +562,31 @@ describe('copy instance', () => {
     expect(i18n.t('{{count}} in stock', { count: 3 })).toBe('3 in stock')
   })
 
+  it('does not split a colon key that has no spaces', async () => {
+    // The two assertions above pass even with the separators left at their defaults, because
+    // i18next only auto-detects "natural language" keys when they contain spaces. This is the
+    // shape that actually proves nsSeparator is off: without it, i18next reads `checkout` as a
+    // namespace and renders `title`.
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.t('checkout:title')).toBe('checkout:title')
+  })
+
+  it('has both separators disabled in its resolved options', async () => {
+    const i18n = createCopyInstance('en')
+    await i18n.init()
+    expect(i18n.options.keySeparator).toBe(false)
+    expect(i18n.options.nsSeparator).toBe(false)
+  })
+
+  it('never becomes react-i18next\'s default instance', async () => {
+    // Guards the reason initReactI18next is not wired in: whichever instance inits last would
+    // own every bare useTranslation() call in the app, including v1's dotted keys.
+    const i18n = createCopyInstance('pt')
+    await i18n.init()
+    expect(getI18n()).toBeUndefined()
+  })
+
   it('has no empty translations in pt.json', () => {
     for (const [key, value] of Object.entries(pt as Record<string, string>)) {
       expect(value, `empty translation for "${key}"`).not.toBe('')
@@ -578,13 +614,13 @@ Create `apps/web/src/copy/pt.json`:
   "Increase quantity": "Aumentar quantidade",
   "Awaiting payment": "Aguardando pagamento",
   "In production": "Em produção",
-  "Shipped": "Despachado",
-  "Out of stock": "Estoque insuficiente",
+  "Shipped": "Enviado",
+  "Insufficient stock": "Estoque insuficiente",
   "Expired": "Expirado",
   "Made to order": "Sob encomenda",
   "Sold out": "Esgotado",
   "Photo of {{name}}": "Foto de {{name}}",
-  "No photo yet": "Sem foto ainda"
+  "No photo yet": "Ainda sem foto"
 }
 ```
 
@@ -592,7 +628,6 @@ Create `apps/web/src/copy/i18n.ts`:
 
 ```ts
 import i18next, { type i18n as I18n } from 'i18next'
-import { initReactI18next } from 'react-i18next'
 import pt from './pt.json'
 
 export type Lang = 'pt' | 'en'
@@ -603,20 +638,23 @@ export const LANGS: readonly Lang[] = ['pt', 'en']
  * global one with its own (dotted-key) resources, and the two must not fight. Keys here are
  * the English sentence itself, so English needs no resource bundle — a missing key renders
  * as the key.
+ *
+ * Deliberately NOT wired with `initReactI18next`: that plugin makes whichever instance calls
+ * `init()` last react-i18next's module-level default, which would hand this instance every bare
+ * `useTranslation()` in the app — including v1's, whose dotted keys it cannot resolve. Consumers
+ * get it through `I18nextProvider` instead, which `useTranslation` reads before the default.
  */
 export function createCopyInstance(lang: Lang = 'pt'): I18n {
-  const instance = i18next.createInstance({
+  return i18next.createInstance({
     lng: lang,
     resources: { pt: { translation: pt } },
-    supportedLngs: LANGS as string[],
+    supportedLngs: [...LANGS],
     fallbackLng: false,
     keySeparator: false,
     nsSeparator: false,
     returnNull: false,
     interpolation: { escapeValue: false },
   })
-  instance.use(initReactI18next)
-  return instance
 }
 
 export const copyI18n = createCopyInstance('pt')
@@ -632,9 +670,8 @@ Expected: PASS (5 tests).
 In `apps/web/.storybook/preview.tsx`, add the imports and replace the `preview` object:
 
 ```tsx
-import { useEffect } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { copyI18n } from '../src/copy/i18n'
+import { type Lang, createCopyInstance } from '../src/copy/i18n'
 ```
 
 ```tsx
@@ -663,12 +700,9 @@ const preview: Preview = {
   initialGlobals: { locale: 'pt' },
   decorators: [
     (Story, context) => {
-      const locale = (context.globals.locale as 'pt' | 'en') ?? 'pt'
-      useEffect(() => {
-        void copyI18n.changeLanguage(locale)
-      }, [locale])
+      const locale = (context.globals.locale as Lang) ?? 'pt'
       return (
-        <I18nextProvider i18n={copyI18n} defaultNS="translation">
+        <I18nextProvider i18n={copyFor(locale)} defaultNS="translation">
           <div className="bg-paper text-ink font-body p-6">
             <Story />
           </div>
@@ -679,10 +713,28 @@ const preview: Preview = {
 }
 ```
 
-`copyI18n` must be initialised before Storybook renders — add right after the imports:
+An instance is created but not initialised, and until `init()` runs `t()` returns undefined and
+`changeLanguage()` throws. Rather than initialising one shared instance and mutating its language,
+keep one initialised instance per language and swap which one the provider gets — add right after
+the imports:
 
 ```tsx
-void copyI18n.init()
+// One initialised instance per language, created on first use. Swapping instances instead of
+// mutating a shared one means a story paints in the right language on its FIRST frame (an effect
+// would only fix it on the second) and no story can leak a language into the story after it.
+// `init()` completes synchronously here because the resources are inline and there is no backend
+// or async detector; if either is ever added, this has to be awaited before the first render.
+const instances = new Map<Lang, ReturnType<typeof createCopyInstance>>()
+
+function copyFor(locale: Lang) {
+  let instance = instances.get(locale)
+  if (!instance) {
+    instance = createCopyInstance(locale)
+    void instance.init()
+    instances.set(locale, instance)
+  }
+  return instance
+}
 ```
 
 If `initialGlobals` is not supported by the installed Storybook version, use `globalTypes.locale.defaultValue = 'pt'` instead and note it in your report.
@@ -1146,6 +1198,8 @@ const FORBIDDEN_IMPORTS = [
   '../../pages',
   '../components',
   '../../components',
+  '../i18n',
+  '../../i18n',
 ]
 
 // Browser globals: the UI layer is rendered by the app layer and by Storybook, and must not
@@ -1268,7 +1322,7 @@ const LABEL: Record<OrderStatus, string> = {
   pending: 'Awaiting payment',
   paid: 'In production',
   shipped: 'Shipped',
-  oversold: 'Out of stock',
+  oversold: 'Insufficient stock',
   expired: 'Expired',
 }
 
