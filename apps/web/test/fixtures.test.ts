@@ -8,7 +8,15 @@ import {
   digitalCheckout,
   intlCheckout,
 } from '../src/fixtures/checkout'
-import { adminOrders, paidOrder, publicPaidOrder, publicPendingOrder } from '../src/fixtures/orders'
+import {
+  adminOrders,
+  digitalOrder,
+  orderWithoutStripeSession,
+  paidOrder,
+  publicPaidOrder,
+  publicPendingOrder,
+  shippedWithoutTracking,
+} from '../src/fixtures/orders'
 import {
   digitalLetter,
   drawing,
@@ -20,6 +28,11 @@ import {
   products,
   soldOutDrawing,
 } from '../src/fixtures/products'
+
+// Every order fixture, including the three the five-status list does not hold. `adminOrders` is
+// the lifecycle list the admin renders; these three exist for shapes the design never draws and
+// would drop out of every check below if the checks kept reading `adminOrders`.
+const allOrders = [...adminOrders, digitalOrder, shippedWithoutTracking, orderWithoutStripeSession]
 
 const allProducts = [
   letter,
@@ -98,7 +111,7 @@ describe('fixtures', () => {
   })
 
   it('prices every admin order with the real shipping table', () => {
-    for (const order of adminOrders) {
+    for (const order of allOrders) {
       const lines = order.items.map((i) => ({ priceCents: i.unitAmountCents, qty: i.qty, type: 'physical' as const }))
       expect({ id: order.id, ...computeTotals(lines, order.shippingMethod) }).toEqual({
         id: order.id,
@@ -113,15 +126,51 @@ describe('fixtures', () => {
     // Orders are built by spreading `paidOrder`, which used to carry its `paidAt` and its
     // `stripeSessionId` into orders that then overrode only `createdAt`: one shipped four days
     // before it was paid, another was paid before it existed, and three shared one Stripe session.
-    for (const o of adminOrders) {
+    for (const o of allOrders) {
       const stamps = [o.createdAt, o.paidAt, o.shippedAt].filter((s): s is string => s != null)
       expect({ id: o.id, stamps }).toEqual({ id: o.id, stamps: [...stamps].sort() })
+      // AND ON DIFFERENT DAYS, which a mutation found the hard way: every order used to be paid a
+      // minute after it was created, so the admin pane rendering `paidAt` where it means
+      // `createdAt` printed the identical date and no story could tell. Dropping the Set below to
+      // the raw list is what fails if two stamps ever share a day again.
+      const days = stamps.map((s) => s.slice(0, 10))
+      expect({ id: o.id, days }).toEqual({ id: o.id, days: [...new Set(days)] })
     }
     // Not filtered on presence: every order that reached Stripe has a session id, so an order
-    // missing one must fail here rather than quietly drop out of the uniqueness check.
-    const sessions = adminOrders.map((o) => o.stripeSessionId)
+    // missing one must fail here rather than quietly drop out of the uniqueness check. The single
+    // deliberate exception is `orderWithoutStripeSession`, named rather than filtered out by a
+    // predicate — a predicate would forgive the next fixture that lost its session id by accident.
+    const sessions = allOrders.filter((o) => o !== orderWithoutStripeSession).map((o) => o.stripeSessionId)
     expect(sessions.every((s) => typeof s === 'string' && s.length > 0)).toBe(true)
-    expect(new Set(sessions).size).toBe(adminOrders.length)
+    expect(new Set(sessions).size).toBe(sessions.length)
+    expect(orderWithoutStripeSession.stripeSessionId).toBeUndefined()
+  })
+
+  it('gives every order its own money, so an assertion cannot pass on the wrong one', () => {
+    // THE DEFECT PR 3'S SWEEP RECORDED AND PR 4 TASK 6 REPAIRED. Three orders carried 32600 and two
+    // carried 6700, because `shippedOrder`/`oversoldOrder` spread `paidOrder`, `expiredOrder`
+    // spread `pendingOrder`, and none of them redeclared `amounts`. A detail-pane assertion that
+    // "this order's total is shown" was therefore satisfied by four other orders' panes as well.
+    // Ids and order numbers are checked on the same line for the same reason.
+    expect(new Set(allOrders.map((o) => o.amounts.totalCents)).size).toBe(allOrders.length)
+    expect(new Set(allOrders.map((o) => o.id)).size).toBe(allOrders.length)
+    expect(new Set(allOrders.map((o) => o.orderNumber)).size).toBe(allOrders.length)
+    // The items arrays too: they used to be one shared reference, so an order could not differ in
+    // what was bought even if its amounts did.
+    expect(new Set(allOrders.map((o) => o.items)).size).toBe(allOrders.length)
+  })
+
+  it('covers the two order shapes the design never draws', () => {
+    // Digital-only: `AdminOrder` types both as nullable and the checkout omits both for a cart
+    // with nothing physical in it, so the admin's delivery block must render an order that has
+    // neither. No other fixture is null on either field.
+    expect(digitalOrder.shippingAddress).toBeNull()
+    expect(digitalOrder.shippingMethod).toBeNull()
+    expect(adminOrders.every((o) => o.shippingAddress !== null && o.shippingMethod !== null)).toBe(true)
+    // Shipped with no tracking code: legal, and the ordinary case for a parcel handed over in
+    // person, since the PATCH parses `trackingCode` as `.optional()`.
+    expect(shippedWithoutTracking.status).toBe('shipped')
+    expect(shippedWithoutTracking.trackingCode).toBeUndefined()
   })
 
   it('exposes the checkout errors the API can really send', () => {
