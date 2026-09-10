@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkoutRequestSchema, checkoutRules, fieldErrorsFromIssues } from '../src/checkout'
+import { CART_MAX_DISTINCT, CART_MAX_QTY } from '../src/shipping'
 
 const buyer = { name: 'Marina Bicalho', email: 'marina@example.com' }
 const brAddress = {
@@ -23,10 +24,22 @@ describe('checkoutRequestSchema', () => {
     expect(parsed.shippingAddress!.country).toBe('BR')
     expect(parsed.shippingMethod).toBe('pac')
   })
-  it('rejects qty over 5, more than 5 distinct items and duplicate slugs', () => {
-    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: 6 }] })).toThrow()
-    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((slug) => ({ slug, qty: 1 }))
-    expect(() => checkoutRequestSchema.parse({ ...base, items: six })).toThrow()
+  // Derived from the constants, never from literals. This test was written as `qty: 6` and six
+  // slugs back when both caps were 5, so it silently stopped testing either one the day they
+  // moved apart — and it could not have told them apart even before that, which is the whole
+  // reason they are now different numbers.
+  //
+  // Each cap is asserted from BOTH sides. Without the at-the-cap half, a schema that rejected
+  // every cart would pass all three of the rejection assertions.
+  it('rejects a qty above the per-item cap and a cart above the distinct-item cap, and accepts both at the cap', () => {
+    const items = (count: number, qty = 1) => Array.from({ length: count }, (_, i) => ({ slug: `s${i}`, qty }))
+
+    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: CART_MAX_QTY + 1 }] })).toThrow()
+    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: CART_MAX_QTY }] })).not.toThrow()
+
+    expect(() => checkoutRequestSchema.parse({ ...base, items: items(CART_MAX_DISTINCT + 1) })).toThrow()
+    expect(() => checkoutRequestSchema.parse({ ...base, items: items(CART_MAX_DISTINCT) })).not.toThrow()
+
     expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'a', qty: 1 }, { slug: 'a', qty: 2 }] })).toThrow()
   })
   it('rejects a bad e-mail, a one-letter name, an unknown method and oversized notes', () => {

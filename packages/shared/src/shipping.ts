@@ -1,5 +1,5 @@
-export const CART_MAX_DISTINCT = 5
-export const CART_MAX_QTY = 5
+export const CART_MAX_DISTINCT = 10
+export const CART_MAX_QTY = 8
 
 // Curated list — Correios reaches 200+ countries, this is where Augusto is willing to ship.
 export const INTL_ALLOWED_COUNTRIES = [
