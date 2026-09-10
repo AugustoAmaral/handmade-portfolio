@@ -50,10 +50,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * page look like it went wrong.
  *
  * ANYTHING THAT IS NOT `pending` READS AS CONFIRMED, which covers `shipped` (a page kept open
- * across a dispatch) and also `oversold` — paid, but the stock ran out underneath it. "Pedido
- * feito" is true there and "agora é minha vez" is optimistic; the shop owes that buyer a different
- * sentence, and neither the design nor the spec has one. FLAGGED, not solved: inventing the copy
- * here would put words in Augusto's mouth on the worst screen in the flow.
+ * across a dispatch) and also `oversold` and `expired` — see the marker on the branch itself, which
+ * is where the decision is actually made. FLAGGED, not solved: inventing the copy here would put
+ * words in Augusto's mouth on the two worst screens in the flow.
  *
  * THE TABLE SHRINKS WITH WHAT IS KNOWN. A digital order has no shipping method and no ETA
  * (`PublicOrder` types both nullable and `computeTotals` charges nothing for it), so it gets the
@@ -67,6 +66,22 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  */
 export function DonePage({ order, lang, gaveUp }: DonePageProps) {
   const { t } = useTranslation()
+  // ⚠️ OUTSTANDING COPY — `oversold` AND `expired` RENDER THE CONFIRMED SCREEN, AND SHOULD NOT.
+  //
+  // `ORDER_STATUSES` is `pending | paid | shipped | oversold | expired`, and this line sorts them
+  // into two buckets, so three of them land on "Pedido feito. Agora é minha vez.":
+  //   - `paid` and `shipped` — correct, and what the sentence was written for.
+  //   - `oversold` — the card cleared and then the stock ran out underneath it. "Pedido feito" is
+  //     still true; "agora é minha vez" is not, because what the buyer needs to hear is what
+  //     happens to their money.
+  //   - `expired` — the checkout session lapsed, so the order was never paid at all. Here even
+  //     "Pedido feito" is false. Reachable by a buyer who leaves this page open past the session,
+  //     or who returns to the `/thanks` URL later and lets the lookup run.
+  //
+  // Left deliberately unwritten rather than guessed: Augusto is writing these two sentences
+  // himself, and copy invented here would ship as his voice on the two worst screens in the flow.
+  // Whoever picks this up needs two new `pt.json` keys and a third branch below — the shape is the
+  // `gaveUp` ternary already on the headline and the paragraph, which is the same kind of split.
   const confirmed = order !== null && order.status !== 'pending'
   const method = order?.shippingMethod ?? null
   return (
