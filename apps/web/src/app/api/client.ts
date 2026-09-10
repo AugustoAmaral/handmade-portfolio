@@ -18,6 +18,27 @@ interface ErrorEnvelope {
   error?: { code?: string; message?: string; fieldErrors?: FieldErrors }
 }
 
+/** react-query's default, and the ceiling this predicate keeps for the failures worth repeating. */
+const MAX_ATTEMPTS = 3
+
+/**
+ * Whether a failed query is worth asking again, wired as the QueryClient's default in `main.tsx`.
+ *
+ * A 4XX IS THE SERVER'S FINAL ANSWER. react-query retries three times by default with an
+ * exponential backoff, so without this a mistyped `/exhibit/:slug` spends about seven seconds on
+ * the loading screen re-asking for a piece the API has already said three times does not exist,
+ * and only then shows the not-found screen. Nothing is fixed by the wait — the answer is identical
+ * every time — and the reader pays all of it.
+ *
+ * Anything else IS worth repeating: a 5xx and a dropped connection (which never becomes an
+ * `ApiError` at all, because `fetch` rejects before there is a status to read) are both states that
+ * can be over by the next attempt.
+ */
+export function retryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < MAX_ATTEMPTS
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('shop_admin_token')
   const headers = new Headers(init.headers)

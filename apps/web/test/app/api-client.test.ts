@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api } from '../../src/app/api/client'
+import { ApiError, api, retryQuery } from '../../src/app/api/client'
 
 function respond(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -63,5 +63,31 @@ describe('api', () => {
     // A gateway returning HTML is the shape that breaks a client which assumes `res.json()` works.
     expect(error).toBeInstanceOf(ApiError)
     expect(error).toMatchObject({ status: 502, code: 'UNKNOWN' })
+  })
+})
+
+describe('retryQuery', () => {
+  it('never repeats a 4xx, however early the failure', () => {
+    // The answer is the same every time, and the wait is paid by a reader staring at the loading
+    // screen. `failureCount` 0 is the FIRST failure: a guard that only fired later would still
+    // spend a backoff on a slug that does not exist.
+    expect(retryQuery(0, new ApiError(404, 'PRODUCT_NOT_FOUND', 'gone'))).toBe(false)
+    expect(retryQuery(0, new ApiError(400, 'VALIDATION', 'bad'))).toBe(false)
+  })
+
+  it('repeats a 5xx up to three times and then stops', () => {
+    // Both ends, because they are separate guards: without the first, a shop that is briefly down
+    // never recovers on its own; without the second, a shop that stays down is asked forever.
+    const error = new ApiError(503, 'UNAVAILABLE', 'down')
+    expect(retryQuery(0, error)).toBe(true)
+    expect(retryQuery(2, error)).toBe(true)
+    expect(retryQuery(3, error)).toBe(false)
+  })
+
+  it('repeats a failure that never became an ApiError at all', () => {
+    // A dropped connection rejects inside `fetch`, before there is a status to read, so it arrives
+    // here as a TypeError. Treating an unrecognised failure as final is how a flaky network turns
+    // into a permanent error screen.
+    expect(retryQuery(0, new TypeError('Failed to fetch'))).toBe(true)
   })
 })
