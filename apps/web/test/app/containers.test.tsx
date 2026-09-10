@@ -252,6 +252,25 @@ describe('ShopShellContainer', () => {
     expect(document.activeElement).toBe(checkout)
   })
 
+  it('closes the bag when the route under it changes', async () => {
+    // The drawer's only internal destination is `Ir para o pagamento`, a real `<a href>` the app
+    // root upgrades to a client-side navigation — so before this the checkout arrived with the bag
+    // still covering it, and `CheckoutPage`'s own `Voltar para a sacola` opened a bag that had
+    // never shut. `navigateTo` rather than a click on the link: the interceptor is not in this
+    // harness, and the claim is about the shell reacting to a route change, not about the anchor.
+    stubFetch(() => catalogue(letter))
+    putInCart({ slug: letter.slug, qty: 1 })
+    renderShop('/')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sacola (1)' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await act(async () => {
+      await navigateTo!('/checkout')
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('adds from the product page, opens the bag, and returns focus to the button that opened it', async () => {
     stubFetch((url) => (url.includes(`/products/${letter.slug}`) ? json({ product: letter }) : catalogue(letter)))
     renderShop(`/exhibit/${letter.slug}`)

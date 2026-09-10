@@ -1,6 +1,6 @@
 import { type CartItem, type PublicProduct, computeTotals, hasPhysicalItems } from '@shop/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Outlet, useOutletContext } from 'react-router'
+import { Outlet, useLocation, useOutletContext } from 'react-router'
 import { ShopShell } from '../ui/pages'
 import type { CartLineData } from '../ui/shop'
 import { useProducts } from './api/queries'
@@ -106,6 +106,7 @@ export function ShopShellContainer() {
   const cart = useCart()
   const { lang, toggle } = useLang()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const { pathname } = useLocation()
   // The control focus returns to. Held in a ref rather than state because nothing renders from it
   // and writing it must not cost a render on its own.
   const openerRef = useRef<HTMLElement | null>(null)
@@ -130,6 +131,21 @@ export function ShopShellContainer() {
     },
     [add, openCart],
   )
+
+  /**
+   * THE BAG CLOSES WHEN THE ROUTE UNDER IT CHANGES, and until Task 12 booted the app nothing had
+   * ever navigated with it open. Its one internal destination — `Ir para o pagamento` — is a real
+   * `<a href>` that `LinkInterceptor` upgrades to a client-side navigation, so the checkout arrived
+   * with the drawer still covering it and `CheckoutPage`'s own `Voltar para a sacola` opening a bag
+   * that was never shut. Nothing in the unit suite could see it: the checkout tests render `/checkout`
+   * directly, which is a bag that was closed to begin with.
+   *
+   * Keyed on the path rather than on the whole location: `/thanks` rewrites its own query while it
+   * polls, and a bag that closed on that would be closing on nothing the reader did.
+   */
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [pathname])
 
   useEffect(() => {
     if (!drawerOpen) return
