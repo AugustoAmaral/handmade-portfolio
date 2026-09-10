@@ -1,4 +1,6 @@
 export * from './AdminHeader'
 export * from './LoginCard'
+export * from './ProductBasicsFields'
+export * from './ProductLocalizedFields'
 export * from './ProductRow'
 export * from './ProductsTable'

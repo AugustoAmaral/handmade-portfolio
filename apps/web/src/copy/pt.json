@@ -168,5 +168,19 @@
   "Delete": "Apagar",
   "Delete for good?": "Apagar de vez?",
   "Yes, delete": "Sim, apagar",
-  "Cancel": "Cancelar"
+  "Cancel": "Cancelar",
+  "Identifier": "Identificador",
+  "handwritten-letter": "carta-escrita",
+  "Price (R$)": "Preço (R$)",
+  "minimum {{price}}": "mínimo {{price}}",
+  "Physical": "Físico",
+  "Digital": "Digital",
+  "Portuguese": "Português",
+  "English": "English",
+  "Name (PT)": "Nome",
+  "Name (EN)": "Name",
+  "Subtitle (PT)": "Subdescrição",
+  "Subtitle (EN)": "Subtitle",
+  "Description (PT)": "Descrição",
+  "Description (EN)": "Description"
 }
