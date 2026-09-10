@@ -67,6 +67,7 @@ Created under `apps/web/src/app/` (STATEFUL — router, IO, state; not covered b
 | `api/queries.ts` | react-query hooks: `useProducts`, `useProduct(slug)`, `useOrder(orderNumber, sessionId)`, `useCheckout()` mutation |
 | `state/useCart.ts` | `shop_cart` localStorage, add/setQty/remove/clear, `CART_MAX_*` limits, `count` |
 | `state/useLang.ts` | `shop_lang` localStorage + `navigator.language` fallback, calls `i18n.changeLanguage` |
+| `anchors.ts` | `interceptableAnchor(event)` and `routeTargetOf(anchor)` — the rule for which clicks are ours, shared with `.storybook/preview.tsx` |
 | `LinkInterceptor.tsx` | capture-phase click → `navigate()` for plain same-origin anchors only |
 | `ShopShellContainer.tsx` | cart + drawer state + language, wraps the shop routes via `<Outlet/>` |
 | `routes/HomeRoute.tsx` | catalog query → `HomePage` |
@@ -149,8 +150,9 @@ The v1 client is deleted in Task 12, so this is a rewrite, not a move. Two diffe
 - [ ] **Step 1: Write the failing test**
 
 ```ts
+// apps/web/test/app/api-client.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api } from '../../src/app/api/client'
+import { ApiError, api, retryQuery } from '../../src/app/api/client'
 
 function respond(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -216,6 +218,32 @@ describe('api', () => {
     expect(error).toMatchObject({ status: 502, code: 'UNKNOWN' })
   })
 })
+
+describe('retryQuery', () => {
+  it('never repeats a 4xx, however early the failure', () => {
+    // The answer is the same every time, and the wait is paid by a reader staring at the loading
+    // screen. `failureCount` 0 is the FIRST failure: a guard that only fired later would still
+    // spend a backoff on a slug that does not exist.
+    expect(retryQuery(0, new ApiError(404, 'PRODUCT_NOT_FOUND', 'gone'))).toBe(false)
+    expect(retryQuery(0, new ApiError(400, 'VALIDATION', 'bad'))).toBe(false)
+  })
+
+  it('repeats a 5xx up to three times and then stops', () => {
+    // Both ends, because they are separate guards: without the first, a shop that is briefly down
+    // never recovers on its own; without the second, a shop that stays down is asked forever.
+    const error = new ApiError(503, 'UNAVAILABLE', 'down')
+    expect(retryQuery(0, error)).toBe(true)
+    expect(retryQuery(2, error)).toBe(true)
+    expect(retryQuery(3, error)).toBe(false)
+  })
+
+  it('repeats a failure that never became an ApiError at all', () => {
+    // A dropped connection rejects inside `fetch`, before there is a status to read, so it arrives
+    // here as a TypeError. Treating an unrecognised failure as final is how a flaky network turns
+    // into a permanent error screen.
+    expect(retryQuery(0, new TypeError('Failed to fetch'))).toBe(true)
+  })
+})
 ```
 
 > **Amended after Task 1 shipped.** The block above is regenerated from `apps/web/test/app/api-client.test.ts` as built. The original draft wrote `vi.fn(async () => respond(...))` and then read `fetchMock.mock.calls[0]![1]!.headers` — which does not typecheck: `vi.fn` infers a zero-argument mock, so `mock.calls` is `[][]` and index `[1]` is out of range under the repo's `strict: true`. Three of the five tests depend on that read, so the file would have failed `tsc` as written. The `fetchStub` helper types the mock to the shape `fetch` is really called with. **Tasks 2-13: any mock whose arguments you later inspect must declare its parameters.**
@@ -249,6 +277,27 @@ interface ErrorEnvelope {
   error?: { code?: string; message?: string; fieldErrors?: FieldErrors }
 }
 
+/** react-query's default, and the ceiling this predicate keeps for the failures worth repeating. */
+const MAX_ATTEMPTS = 3
+
+/**
+ * Whether a failed query is worth asking again, wired as the QueryClient's default in `main.tsx`.
+ *
+ * A 4XX IS THE SERVER'S FINAL ANSWER. react-query retries three times by default with an
+ * exponential backoff, so without this a mistyped `/exhibit/:slug` spends about seven seconds on
+ * the loading screen re-asking for a piece the API has already said three times does not exist,
+ * and only then shows the not-found screen. Nothing is fixed by the wait — the answer is identical
+ * every time — and the reader pays all of it.
+ *
+ * Anything else IS worth repeating: a 5xx and a dropped connection (which never becomes an
+ * `ApiError` at all, because `fetch` rejects before there is a status to read) are both states that
+ * can be over by the next attempt.
+ */
+export function retryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < MAX_ATTEMPTS
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('shop_admin_token')
   const headers = new Headers(init.headers)
@@ -262,7 +311,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   // value an ApiError the callers can branch on instead of a SyntaxError from deep in the client.
   const data = (await res.json().catch(() => ({}))) as ErrorEnvelope
   if (!res.ok) {
-    throw new ApiError(res.status, data.error?.code ?? 'UNKNOWN', data.error?.message ?? 'Request failed', data.error?.fieldErrors)
+    throw new ApiError(
+      res.status,
+      data.error?.code ?? 'UNKNOWN',
+      data.error?.message ?? 'Request failed',
+      data.error?.fieldErrors,
+    )
   }
   return data as T
 }
@@ -290,25 +344,43 @@ import type { CheckoutRequest, PublicOrder, PublicProduct } from '@shop/shared'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { type ApiError, api } from './client'
 
+// EVERY public GET ANSWERS IN AN ENVELOPE, and these hooks are where it comes off. `products.ts`
+// replies `{ products }`, `{ product }` and `orders.ts` replies `{ order }` — one named key, never
+// the bare value. Unwrapping here rather than in each container keeps the shape in one place, and
+// it is the same split `client.ts` already makes for the error envelope.
 export function useProducts() {
-  return useQuery({ queryKey: ['products'], queryFn: () => api<PublicProduct[]>('/api/products') })
+  return useQuery({
+    queryKey: ['products'],
+    queryFn: async () => (await api<{ products: PublicProduct[] }>('/api/products')).products,
+  })
 }
 
 export function useProduct(slug: string) {
-  return useQuery({ queryKey: ['product', slug], queryFn: () => api<PublicProduct>(`/api/products/${encodeURIComponent(slug)}`) })
+  return useQuery({
+    queryKey: ['product', slug],
+    queryFn: async () =>
+      (await api<{ product: PublicProduct }>(`/api/products/${encodeURIComponent(slug)}`)).product,
+  })
 }
 
 // The thank-you page lands the instant Stripe redirects, which is before the webhook has
 // necessarily been delivered. Poll while the order is still `pending` and stop once it settles;
 // `enabled` keeps the query idle until both halves of the credential are present.
+//
+// `poll` is the container's stop switch and it cannot be expressed any other way: spec:202 caps the
+// wait at about thirty seconds, and the query key is built from the credential, so a container that
+// tried to stop by passing `null` would change the key and throw away the order it had already
+// loaded. It defaults to true, so the polling contract is unchanged for anything that ignores it.
 const DONE_POLL_MS = 2000
 
-export function useOrder(orderNumber: number | null, sessionId: string | null) {
+export function useOrder(orderNumber: number | null, sessionId: string | null, poll = true) {
   return useQuery({
     queryKey: ['order', orderNumber, sessionId],
-    queryFn: () => api<PublicOrder>(`/api/orders/${orderNumber}?session_id=${encodeURIComponent(sessionId!)}`),
+    queryFn: async () =>
+      (await api<{ order: PublicOrder }>(`/api/orders/${orderNumber}?session_id=${encodeURIComponent(sessionId!)}`))
+        .order,
     enabled: orderNumber != null && sessionId != null,
-    refetchInterval: (query) => (query.state.data?.status === 'pending' ? DONE_POLL_MS : false),
+    refetchInterval: (query) => (poll && query.state.data?.status === 'pending' ? DONE_POLL_MS : false),
     retry: false,
   })
 }
@@ -345,6 +417,7 @@ The v1 shipped this as a Context provider. It is a plain hook here, called once 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
+// apps/web/test/app/use-cart.test.ts
 import { CART_MAX_DISTINCT, CART_MAX_QTY } from '@shop/shared'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -455,6 +528,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 ```ts
+// apps/web/src/app/state/useCart.ts
 import { CART_MAX_DISTINCT, CART_MAX_QTY, type CartItem, cartItemSchema } from '@shop/shared'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -981,49 +1055,18 @@ Expected: FAIL — module not found.
 
 ```tsx
 // apps/web/src/app/LinkInterceptor.tsx
-import { type MouseEvent, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-
-// Six independent reasons to leave a click alone, each of them something a person deliberately
-// does: a middle click or a held modifier opens the link in a second tab, `target` asks for
-// another browsing context, `download` saves a file, a cross-origin or `mailto:` href leaves the
-// app entirely, and a click that is not inside a link is not a navigation at all. They are
-// separate `if`s rather than one condition because they are separate decisions — merging them
-// would make a single test able to "cover" all six while proving none of them.
-//
-// This is deliberately the same rule, line for line, as `interceptableAnchor` in
-// `.storybook/preview.tsx`, which `AnchorGuard.stories.tsx` pins in real Chromium. A story that
-// shows a link falling through is only evidence about the app if the app decides it identically.
-// The two copies exist because the preview lives outside `src/` and standing in for the app is
-// its whole job — importing the app into it would make the twin a mirror instead of a witness.
-function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
-  // Capture phase means "before anything inside the app sees this click", not "before anything at
-  // all". A handler bound above the root — a modal backdrop, a native listener on `document` —
-  // still runs first, and if it cancelled the click it has already decided what happens.
-  if (event.defaultPrevented) return null
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
-  if (!(event.target instanceof Element)) return null
-  // `closest`, not `event.target`: a real click lands on whatever is innermost — the <span> in a
-  // card title, the <img> in a thumbnail — and only equals the <a> when the link is bare text.
-  const anchor = event.target.closest('a[href]')
-  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
-  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
-  // context, which is the browser's job and not the router's.
-  const target = anchor.getAttribute('target')
-  if (target && target !== '_self') return null
-  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
-  // non-HTTP scheme (`mailto:`, `tel:`) serialises to the string "null" and falls through here.
-  // Reading it off the element rather than building `new URL(href, location.href)` also means a
-  // malformed href can never throw out of a click handler.
-  if (anchor.origin !== window.location.origin) return null
-  return anchor
-}
+import { interceptableAnchor, routeTargetOf } from './anchors'
 
 /**
  * One click handler at the app root upgrades same-origin anchor clicks to client-side navigation,
  * so every component in `ui/` can render a real `<a href>` built from `ui/routes.ts` and none of
  * them imports the router. The links stay real links: right-click, "copy link address", middle
  * click and view-source all keep working, and the page is still navigable before JS has run.
+ *
+ * Which clicks those are is `interceptableAnchor`'s decision, shared with the Storybook preview
+ * so the `AnchorGuard` stories exercise this exact rule in a real browser.
  */
 export function LinkInterceptor({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
@@ -1031,12 +1074,17 @@ export function LinkInterceptor({ children }: { children: ReactNode }) {
   return (
     <div
       onClickCapture={(event) => {
+        // Not part of the shared rule, because it is a different question: `interceptableAnchor`
+        // asks "is this the router's click?", and this asks "has this click already been decided?"
+        // Only the app root ever needs it. Capture phase means "before anything INSIDE the app
+        // sees this click", not "before anything at all" — a handler bound above the root, a modal
+        // backdrop or a native listener on `document`, still runs first. The Storybook decorator
+        // is the outermost element in the preview iframe, so nothing can get there before it.
+        if (event.defaultPrevented) return
         const anchor = interceptableAnchor(event)
         if (!anchor) return
         event.preventDefault()
-        // Path, query and fragment rather than `href`: the router wants a location inside the app,
-        // and handing it the absolute URL would make it a relative path — `/https:/localhost/…`.
-        void navigate(anchor.pathname + anchor.search + anchor.hash)
+        void navigate(routeTargetOf(anchor))
       }}
     >
       {children}
@@ -1058,8 +1106,63 @@ Expected: PASS, 16 tests (7 named + 9 `it.each` cases).
 >
 > **The draft's test was also passing for the wrong reason twice.** `toHaveTextContent('/')` matched `'/about'` by substring, leaving nine mutations green; and `dispatchEvent` outside `act()` left the DOM stale, so "the route did not change" was true even with a navigation pending. Both are fixed in the regenerated block above.
 >
-> **Followed by a structural change:** `interceptableAnchor` now lives in `apps/web/src/app/anchors.ts` and is imported by both `LinkInterceptor` and `.storybook/preview.tsx`. The duplication was defended as keeping the story an independent witness, but the witness only has value if somebody compares the copies, and this task is the proof that nobody does — they had drifted in four places. The failure mode also ran the wrong way: with two copies, breaking `LinkInterceptor` left `AnchorGuard.stories.tsx` green.
+> **Followed by a structural change:** `interceptableAnchor` now lives in `apps/web/src/app/anchors.ts` and is imported by both `LinkInterceptor` and `.storybook/preview.tsx`. The duplication was defended as keeping the story an independent witness, but the witness only has value if somebody compares the copies, and this task is the proof that nobody does. **Corrected in the sweep, because the shipped comment in `preview.tsx` already disowns the version that stood here:** the two copies had NOT "drifted in four places" in the tree. The four differences were between this plan's draft snippet and the already-committed `preview.tsx`, caught in review, never coexisting — the branch came within one review of shipping them, and no test in either project could have seen a single one. The failure mode also ran the wrong way: with two copies, breaking `LinkInterceptor` left `AnchorGuard.stories.tsx` green.
 
+
+```ts
+// apps/web/src/app/anchors.ts
+import { type MouseEvent } from 'react'
+
+/**
+ * The one rule for "is this click the router's, or the browser's?".
+ *
+ * Two things apply it: `LinkInterceptor` at the app root, and the `AnchorGuard` decorator in
+ * `.storybook/preview.tsx`, which has to make the same call because a real `<a href>` in a story
+ * is a live link with no router behind it. `AnchorGuard.stories.tsx` exercises the decorator in
+ * real Chromium, so as long as both sides call THIS function, that story is evidence about the
+ * app. It used to be a second copy of the rule, and Task 4 came within one review of shipping four
+ * differences between them — none of which any test could have caught, because each copy was only
+ * ever exercised by its own project. A story that passes while the app is broken is worse than no
+ * story, because it reads as proof.
+ *
+ * Kept free of react-router (and of anything else the app pulls in) on purpose: it is a pure DOM
+ * predicate, so importing it into the Storybook preview does not drag the router into every
+ * story bundle. The `react` import is types only and disappears at compile time.
+ *
+ * Six independent reasons to leave a click alone, each of them something a person deliberately
+ * does: a middle click or a held modifier opens the link in a second tab, `target` asks for
+ * another browsing context, `download` saves a file, a cross-origin or `mailto:` href leaves the
+ * app entirely, and a click that is not inside a link is not a navigation at all. They are
+ * separate `if`s rather than one condition because they are separate decisions — merged, a single
+ * test could "cover" all six while proving none of them.
+ */
+export function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  if (!(event.target instanceof Element)) return null
+  // `closest`, not `event.target`: a real click lands on whatever is innermost — the <span> in a
+  // card title, the <img> in a thumbnail — and only equals the <a> when the link is bare text.
+  const anchor = event.target.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
+  // context, which is the browser's job and not the router's.
+  const target = anchor.getAttribute('target')
+  if (target && target !== '_self') return null
+  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
+  // non-HTTP scheme (`mailto:`, `tel:`) serialises to the string "null" and falls through here.
+  // Reading it off the element rather than building `new URL(href, location.href)` also means a
+  // malformed href can never throw out of a click handler.
+  if (anchor.origin !== window.location.origin) return null
+  return anchor
+}
+
+/**
+ * Where the router should go for an anchor it has taken over: the location INSIDE the app, never
+ * `href`. An absolute URL handed to `navigate()` is treated as a relative path — `/https:/…`.
+ */
+export function routeTargetOf(anchor: HTMLAnchorElement): string {
+  return anchor.pathname + anchor.search + anchor.hash
+}
+```
 - [ ] **Step 5: Prove the assertions can fail**
 
 1. Replace `.closest('a')` with `event.target as HTMLAnchorElement` → the nested-child test must go red.
@@ -1106,6 +1209,7 @@ Each task ends with: `npx tsc -p tsconfig.json --noEmit`, `NODE_OPTIONS=--max-ol
 **Interfaces — produced:**
 
 ```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep); the files carry the doc comments.
 interface ShopHeaderProps {
   cartCount: number
   lang: 'pt' | 'en'
@@ -1155,6 +1259,7 @@ The bag button must announce its count to assistive tech, not just show it: `Sac
 - [ ] **Step 3: Story — the header reports intent**
 
 ```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
 export const OpensTheBag: Story = {
   args: { cartCount: 2, lang: 'pt', onOpenCart: fn(), onToggleLang: fn() },
   play: async ({ args, canvas, userEvent }) => {
@@ -1188,6 +1293,7 @@ Use the `Stepper` primitive rather than rebuilding the three-cell control.
 - [ ] **Step 5: Stories — the drawer's behaviour**
 
 ```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
 export const IncrementsAndDecrementsBySlug: Story = {
   args: { open: true, lines: [/* two fixture lines */], onInc: fn(), onDec: fn(), onClose: fn(), /* totals */ },
   play: async ({ args, canvas, userEvent }) => {
@@ -1225,6 +1331,7 @@ git commit -m "feat(web): add the shop header and the cart drawer"
 **Interfaces — produced:**
 
 ```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep).
 interface HeroProps { featured: PublicProduct | null; lang: 'pt' | 'en' }
 interface FeaturedCardProps { product: PublicProduct; lang: 'pt' | 'en' }
 interface ProductCardProps { product: PublicProduct; lang: 'pt' | 'en' }
@@ -1243,6 +1350,7 @@ Notes that matter, all from the extract: the catalog grid is `auto-**fill**` whe
 `Hero` (with a featured product, and with `featured: null` — the API returns no featured product until one is flagged), `ProductCard` (in stock, made to order, sold out, digital), `CatalogGrid` (full catalogue, single item, empty), `ClosingBlock`.
 
 ```tsx
+// STORY SKETCH — the shipped story is `ProductCard.stories.tsx`’s `MadeToOrder`, which asserts more. Not the file.
 export const CardLinksToTheProduct: Story = {
   args: { product: letter, lang: 'pt' },
   play: async ({ canvas }) => {
@@ -1279,6 +1387,7 @@ git commit -m "feat(web): add the home hero, catalog grid and closing block"
 **Interfaces — produced:**
 
 ```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep).
 interface ProductGalleryProps {
   product: PublicProduct
   lang: 'pt' | 'en'
@@ -1301,6 +1410,7 @@ A product with **no photos** must render the paper-coloured placeholder from spe
 `ProductGallery`: three photos with the first selected, third selected, single photo (no thumb row), no photos at all. `SpecsTable`: four specs, one spec, and the empty case.
 
 ```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
 export const SelectingAThumbReportsItsIndex: Story = {
   play: async ({ args, canvas, userEvent }) => {
     // ⚠️ The draft queried /detalhe|foto/i. "Detalhe" comes from the prototype's thumbnail
@@ -1385,6 +1495,7 @@ The largest component task, and the one with the most that is designed rather th
 **Interfaces — produced:**
 
 ```ts
+// INTERFACE SKETCH — the shipped `CheckoutSection.tsx` also exports `CheckoutField` and the error table. Not the file.
 // One shape for all four form sections, so the page wires them identically.
 interface SectionProps<T> {
   values: T
@@ -1436,6 +1547,7 @@ Use `TextInput`'s `error` prop, which PR 2 already wired to `aria-errormessage` 
 `CheckoutBuyerSection`: empty, filled, with errors on every field. `CheckoutAddressSection`: BR empty, BR filled, international filled, with errors. `CheckoutShippingSection`: BR (PAC and SEDEX), international (one option), none selected with a `required` error. `OrderSummaryPanel`: normal, submitting (button disabled, with the busy state in a `role="status"` line — **not** by renaming the button, which contradicts the story's own `getByRole({ name: /pagar/i })` query and takes away the name a voice-control user asks for), `submitError` set, empty cart, and **empty shipping options** — `shippingOptionsFor('ZW')` returns `[]`, which is reachable and renders a 1px ink rectangle containing nothing.
 
 ```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
 export const CountryDrivesTheFields: Story = {
   args: { values: { ...FR_ADDRESS, country: 'FR' }, errors: {}, onChange: fn() },
   play: async ({ canvas }) => {
@@ -1502,6 +1614,7 @@ These are the stories that make the Storybook a design review surface rather tha
 - [ ] **Step 3: One page-level interaction test**
 
 ```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
 export const AddingFromTheProductPageReportsTheSlug: Story = {
   play: async ({ args, canvas, userEvent }) => {
     await userEvent.click(canvas.getByRole('button', { name: /colocar na sacola/i }))
@@ -1558,6 +1671,12 @@ A real `QueryClient` (with `retry: false`), a real `MemoryRouter`, real hooks. `
 
 ```tsx
 // apps/web/test/app/containers.test.tsx
+// ⚠️ INTERMEDIATE STATE — PLAN-TIME DRAFT, NOT THE SHIPPED FILE, and deliberately left as one.
+// The shipped file is 795 lines / 29 tests and this draft is 125, so it is not an excerpt of it
+// either: Task 11 replaced the harness wholesale because bare routes cannot open a drawer that
+// lives in the shell, and rendered the real route table under a real `ShopShellContainer`
+// instead — strictly more wiring under test, which narrowed two assertions below as a
+// consequence. Read the file for what runs; read this for what was asked for.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -1690,6 +1809,7 @@ The two `DoneRoute` tests are a pair on purpose: either alone passes for a broke
 **Added after Task 1.** `useOrder`'s two real decisions — `refetchInterval` stopping once the status leaves `pending`, and `enabled` gating on both halves of the credential — shipped in Task 1 with no coverage at all, because Task 1 only asked for a client test. That was a gap in this plan, not in the implementation. It is closed here, at the container, because the observable behaviour is what matters and because a hook test would need its own `QueryClient` harness to say the same thing:
 
 ```tsx
+// EXCERPT — one test of `apps/web/test/app/containers.test.tsx`, as briefed. Not the file.
 it('stops polling once the order is no longer pending', async () => {
   vi.useFakeTimers()
   let status = 'pending'
@@ -1765,12 +1885,26 @@ import { createRoot } from 'react-dom/client'
 import { I18nextProvider } from 'react-i18next'
 import { BrowserRouter } from 'react-router'
 import App from './App'
+import { retryQuery } from './app/api/client'
 import { copyI18n } from './copy/i18n'
 import './index.css'
 
+/**
+ * `retryQuery` rather than react-query's default, and it is the difference between a mistyped
+ * `/exhibit/:slug` showing the not-found screen at once and showing it after about seven seconds of
+ * backoff spent re-asking a question the API has already answered. See the note on the predicate.
+ */
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryQuery } } })
+
+/**
+ * The copy instance is provided rather than installed as react-i18next's default: `src/copy/i18n.ts`
+ * deliberately skips `initReactI18next`, so a bare `useTranslation()` only reaches it through this
+ * provider. `useLang` drives whichever instance its tree was given, which is what lets Storybook
+ * hand each story a different one.
+ */
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={copyI18n}>
         <BrowserRouter>
           <App />
@@ -1792,9 +1926,24 @@ import { DoneRoute } from './app/routes/DoneRoute'
 import { HomeRoute } from './app/routes/HomeRoute'
 import { ProductRoute } from './app/routes/ProductRoute'
 
-// Shop routes only. The admin is rebuilt in PR 4 and its routes arrive with it; until then
-// /admin* falls into the catch-all. `ui/routes.ts` keeps its admin href builders — they are
-// strings, and nothing in the shop renders them (the design drops the Admin nav item entirely).
+/**
+ * SHOP ROUTES ONLY. The admin is rebuilt in PR 4 and its routes arrive with it; until then `/admin*`
+ * falls into the catch-all below. That is safe because these PRs merge into `docs/v2-design` and not
+ * into `main` — production keeps serving v1 until PR 5 lands. `ui/routes.ts` keeps its admin href
+ * builders: they are strings, nothing in the shop renders them (the design drops the Admin nav item
+ * entirely), and PR 4 consumes them.
+ *
+ * `LinkInterceptor` wraps the route table rather than sitting inside it, because it has to see
+ * clicks on the shell's own chrome — the header's `Sobre`, the drawer's `Ir para o pagamento` —
+ * which are rendered by `ShopShellContainer` around the `<Outlet/>` and not by any route.
+ *
+ * The catch-all REDIRECTS to the catalogue rather than rendering a not-found screen, and the two are
+ * deliberately different answers: `NoticePage` exists for a piece the catalogue could not give us,
+ * which is a real address with nothing behind it, while an unrouted path is not an address this app
+ * has ever had. The one exception is `/admin`, which IS such an address today — and it is a
+ * temporary one, tracked by the skipped e2e test rather than by a screen that would have to be
+ * deleted again in PR 4.
+ */
 export default function App() {
   return (
     <LinkInterceptor>
@@ -1841,7 +1990,7 @@ Expected: `no dangling references`. If `i18next-browser-languagedetector` is now
 
 - [ ] **Step 5: Resolve the dead copy key**
 
-`Photo of {{name}}` was planted in PR 2 and `ImageFrame` takes `alt` as a prop, so nothing calls it. Decide and act, do not leave it: if the product gallery ends up needing a generated alt for photos with no `alt` in the data, use it there; otherwise delete the key from `pt.json`. Say which you did and why.
+**RESOLVED IN TASK 6, AND THIS STEP CONTRADICTED THE GLOBAL CONSTRAINT UNTIL THE SWEEP CORRECTED IT.** The key is NOT dead: Task 6 gave it a designed use as `Hero`'s alt fallback when the photo carries none, and Task 7 made the same call for the gallery's main photo. Both call sites are shipped (`shop/Hero.tsx`, `shop/ProductGallery.tsx`). **Keep the key.** The instruction that stood here — "otherwise delete the key from `pt.json`" — was written before that decision and survived eleven amendments beside a constraint that says the opposite.
 
 - [ ] **Step 6: Rewrite the e2e suite for the v2 flow**
 
@@ -1849,19 +1998,69 @@ Expected: `no dangling references`. If `i18next-browser-languagedetector` is now
 // e2e/shop.spec.ts
 import { expect, test } from '@playwright/test'
 
-test('catalog → product → bag drawer shows the line and the totals', async ({ page }) => {
+// The shop picks its language from `navigator.language` when nothing is stored, so the copy every
+// selector below matches is a property of the BROWSER rather than of the app. Pinned here: left to
+// the default, this file passes on a machine whose Chromium reports en-US and fails on one that
+// reports pt-BR, and neither result would be about the code.
+test.use({ locale: 'pt-BR' })
+
+// The seed (`apps/api/src/seed.ts`) is four active products, `handwritten-letter` first and the only
+// one flagged featured, at R$ 50,00, physical, `stock: null` — made to order. None of them has a
+// photo, so every image slot renders the "ainda sem foto" placeholder and the catalogue link's
+// accessible name is that placeholder plus the name, subtitle, price and availability. Matching a
+// substring of it with a regex is what keeps this test from re-encoding the whole card.
+test('catalogue → product → bag drawer shows the line and the totals', async ({ page }) => {
   await page.goto('/')
+
   await page.getByRole('link', { name: /carta escrita à mão/i }).click()
-  await expect(page).toHaveURL(/\/exhibit\//)
+  await expect(page).toHaveURL(/\/exhibit\/handwritten-letter$/)
+  // The piece really is on screen before anything is added to the bag: `ProductPage` is the only
+  // screen with the name as its `<h1>`, so this separates a real product page from the loading
+  // screen and from the not-found screen, both of which would also answer a click.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Exhibit 001 — Carta escrita à mão')
+
   await page.getByRole('button', { name: /colocar na sacola/i }).click()
 
-  const drawer = page.getByRole('dialog', { name: /sacola/i })
+  // Named, not just present: the drawer is the shop's only dialog and `aria-labelledby` is what
+  // makes it announce as the bag rather than as an unlabelled modal.
+  const drawer = page.getByRole('dialog', { name: 'Sua sacola' })
   await expect(drawer).toBeVisible()
-  await expect(drawer.getByText(/carta escrita à mão/i)).toBeVisible()
-  await expect(drawer.getByText(/total/i)).toBeVisible()
+  await expect(drawer.getByText('Exhibit 001 — Carta escrita à mão')).toBeVisible()
+
+  // The totals `<dl>`, read as a block. `\s` covers the NO-BREAK SPACE `Intl` puts between `R$` and
+  // the digits — a plain space in the pattern matches nothing at all here.
+  const totals = drawer.locator('dl')
+  await expect(totals).toContainText('Subtotal')
+  await expect(totals).toContainText(/R\$\s*50,00/)
+  await expect(totals).toContainText('Total')
+  // Frete is unresolved for a physical bag until the checkout asks for an address, and the dash the
+  // design draws for it is `aria-hidden`, so the sentence behind it is the assertion.
+  await expect(totals).toContainText('Calculado no pagamento')
+
+  // The bag's one internal destination, and the last hop of the walk. It is here because the whole
+  // suite could not see it anywhere else: the checkout's unit tests render `/checkout` directly,
+  // which is a bag that was closed to begin with, and this link is only a client-side navigation at
+  // all because `LinkInterceptor` is mounted — which is what this task turned on.
+  await drawer.getByRole('link', { name: 'Ir para o pagamento' }).click()
+  await expect(page).toHaveURL(/\/checkout$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Para onde eu mando, e para quem.')
+  await expect(drawer).toBeHidden()
+})
+
+// The state that used to be a blank page, and the reason `NoticePage` exists. It is here rather
+// than only in the unit suite because the delay is the interesting half: react-query's default
+// would spend three backoffs re-asking a 404 before this screen appeared, and only a real browser
+// against a real API runs that code path.
+test('an address with no piece behind it gets a screen, not a blank page', async ({ page }) => {
+  await page.goto('/exhibit/nao-existe')
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Essa peça não está no catálogo.')
+  await expect(page.getByRole('link', { name: 'Ver o catálogo' })).toHaveAttribute('href', '/')
 })
 
 test('admin logs in and sees seeded products', async ({ page }) => {
+  // PR 3 deletes the v1 admin and registers shop routes only, so `/admin` falls into the catch-all.
+  // Skipped rather than deleted: a skipped test with a reason is a tracked commitment.
   test.skip(true, 'the admin app is deleted in PR 3 and rebuilt in PR 4')
   await page.goto('/admin')
 })
@@ -1932,6 +2131,31 @@ Run the full Task 12 Step 7 battery once more, then:
 git add -A
 git commit -m "docs: record the autodocs decision and resync the plan with the shipped files"
 ```
+
+---
+
+## Task 13 outcome
+
+**Autodocs: DROPPED deliberately, by measurement.** Written up in full at spec:229. Short form: Storybook 10's `DocsOptions` has no `autodocs` key, so **this task's own Files list names the wrong file** — `main.ts` cannot enable it. It needs `@storybook/addon-docs` as a new devDependency (not installed) plus `tags: ['autodocs']` **inside** the `preview` object, and a named `export const tags` beside a default export is silently ignored, which measures as 0 docs entries and looks like a clean result. Installed and measured anyway: 166 story + 44 docs entries, suite unchanged at 54 files / 565 tests — docs entries reach neither the vitest addon nor the a11y gate, so all 44 pages would ship unpoliced on a branch whose thesis is that every rendered surface has a gate over it. Reverted; nothing of the probe is on the branch.
+
+**`Stat`: DELETED** (`3fd6a0b`), with its story and its barrel line. No production consumer, and no designed one — PR 4's admin is a login, a table, a form and an order list, with no facts band. The third option nobody had considered is recorded in `AboutFacts`: a self-contained `<dl>` per cell would have been valid and parent-independent, but it fragments one band of four facts into four one-item lists, which is worse to hear read out than two duplicated class strings are to maintain.
+
+**`PLANNED_FOR_PR3`: REMOVED** (`4fa6a1a`). All seven keys have real callers, verified one by one. Proved the remaining check still bites, both ways: an invented orphan key reddens it, and so does orphaning `Photo of {{name}}` by deleting its two call sites — the exact case the whitelist would have hidden.
+
+**zod→`fieldErrors`: MOVED to `@shop/shared`** (`ca1cd1b`). It was **three** copies, not two: the express handler, the checkout container, and — the dangerous one — the fixture that derives `buyerCheckoutErrors`, which every error story on the branch renders. One mutation in the single shared copy now reddens the API suite, the fixture test, two stories and a container test together; before, breaking any one copy left the other two green.
+
+### Sweep findings NOT fixed here — all measured, none guessed
+
+1. **`CART_MAX_QTY` and `CART_MAX_DISTINCT` are both `5`, and are therefore interchangeable everywhere.** Measured, not argued: swapping them inside `useCart.ts` (lines 44/45/54) survives all 564 tests, and making `CartLine` read the wrong one survives too. Eight assertions name these constants and not one can tell them apart. **Not fixed here because the one-line fix changes a customer-visible limit** — how many of one piece may be bought versus how many different pieces — plus the `Maximum {{max}} per item.` copy. Augusto's call.
+2. **The drawer's `Total` row is definitionally its `Subtotal`.** `ShopShellContainer` calls `computeTotals(lines, null)`, so `totalCents === itemsCents` always. No assertion can ever separate them there. Worth a comment on the line before someone writes a false-confidence test.
+3. **`shippingAddress.number` and `shippingAddress.district` both fail as `required`**, so swapping the two lookups in `CheckoutAddressSection` is undetectable — both fields still render their own paragraph with the same sentence. Structural; closing it needs each field's `aria-errormessage` asserted against its own sibling.
+4. **The e2e drawer totals read one `<dl>` with `toContainText`** while the seeded cart holds one item at qty 1, so unit, line, subtotal and total are all `R$ 50,00`. Swapping `itemsCents`/`totalCents` or `unitCents`/`lineCents` in the container survives, and so does deleting the Total row's price.
+5. **`product.subtitle[lang]` is asserted once, in Portuguese only.** Four call sites read it; changing any of them to `.pt` survives. `drawing.subtitle.pt === .en`, so an English story built on that fixture would not catch it either — it has to be `letter`.
+6. **Props that exist only for a story, or that the parent can get wrong silently:** `CheckoutPage.shippingMethodName` is derivable from `shippingOptions` + `shippingMethod` + `lang` (the `needsShipping` shape again); `CartDrawer.shippingCents` is always `null` in the app while its stories feed `2200`; `HomePage.featured` is derivable from `products`; `OrderSummaryPanel.onSubmit` is permanently `undefined` in production because the container always passes `submitFormId`. `AboutPage.portrait` is unpassed too, but that one is spec:219's placeholder and is planted, not dead.
+7. **Dead props with no supplier anywhere:** `ImageFrame.placeholder`, `PillButton.className` (which the component's own doc comment argues against accepting), `RuledList.className`, `RuledRow.className`, `TextArea.rows`, `CheckoutField.placeholder` (dead all the way down into `TextInput.placeholder`). **`RuledRow` is exported and rendered by nothing but its own story** — the same shape as `Stat`, left standing only because `RuledList` is live and the two read as a pair.
+8. **Planted for PR 4, named as such rather than kept quietly:** `Select`, `StatusPill`, `STATUS_LABELS`, the five `admin*` route builders, `shippedOrder` / `oversoldOrder` / `expiredOrder` / `adminOrders`, `inactiveGuide`, `ADMIN_ORDER_TRANSITIONS`, `ParsedProductInput`, `ProductUpdateInput`. **Warning for PR 4:** `paidOrder`, `shippedOrder` and `oversoldOrder` are money-identical and `expiredOrder` equals `pendingOrder`, so the first admin-table story to assert a money cell will not be able to prove it read that row. Give them their own amounts first.
+9. **`ShopShell.stories.tsx`'s decorator sets `cartCount: 2` over lines totalling 3 units**, encoding the exact rule `containers.test.tsx` forbids. Nothing reads it today; the first page story that asserts the bag button's name inherits the wrong number.
+10. **Story coverage against spec:231 is complete** — all fourteen listed shop states have a story, plus eight the spec does not list. The `OutOfStock` story really does drive `submitError: 'OUT_OF_STOCK'` and assert its own sentence, not a generic submit error. `t()` calls with no `pt.json` entry: **zero**. `pt.json` keys nothing accounts for: **zero** (145 keys = 140 literal call sites + 5 `STATUS_LABELS`). No copy in `src/app`, where the scanner could not see it.
 
 ---
 
