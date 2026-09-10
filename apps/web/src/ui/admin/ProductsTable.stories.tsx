@@ -3,111 +3,11 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent, within } from 'storybook/test'
 import { digitalLetter, drawing, inactiveGuide, letter, soldOutDrawing } from '../../fixtures/products'
 import { ProductsTable } from './ProductsTable'
+import { measure, opacityOf } from '../../../.storybook/contrast'
 
-/**
- * WCAG relative luminance, the third copy of these formulas on the branch and the second in this
- * folder. `TextInput.stories.tsx` and `AdminHeader.stories.tsx` carry the other two; hoisting them
- * into one place is a file outside this task's scope, so it goes in the report as work rather than
- * being done quietly here. What is NOT duplicated is the reason: everything below has to survive
- * an `opacity`, because this table states its whole hierarchy in opacity and a ratio taken from a
- * declared colour is the ratio of a colour nobody can see.
- *
- * The parser knows the spellings Chromium hands back and throws with the offending string on
- * anything else, rather than defaulting to the token the colour was probably derived from — which
- * would be assuming the answer to the question being asked. Tailwind 4 compiles a `/40`-style
- * opacity modifier to `color-mix(in oklab, …)` and the computed value comes back as `oklab(…)`.
- */
-interface Rgba {
-  r: number
-  g: number
-  b: number
-  a: number
-}
-
-function fromOklab(parts: number[]): Rgba {
-  const [L, A, B, alpha = 1] = parts as [number, number, number, number?]
-  const long = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3
-  const medium = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3
-  const short = (L - 0.0894841775 * A - 1.291485548 * B) ** 3
-  const [r, g, b] = [
-    4.0767416621 * long - 3.3077115913 * medium + 0.2309699292 * short,
-    -1.2684380046 * long + 2.6097574011 * medium - 0.3413193965 * short,
-    -0.0041960863 * long - 0.7034186147 * medium + 1.707614701 * short,
-  ].map((c) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055))
-  return { r: r!, g: g!, b: b!, a: alpha ?? 1 }
-}
-
-function parseColor(value: string): Rgba {
-  const legacy = value.match(/^rgba?\(([^)]+)\)$/)
-  if (legacy) {
-    const parts = legacy[1]!.split(/[\s,/]+/).filter(Boolean).map(Number)
-    return { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: parts[3] ?? 1 }
-  }
-  const srgb = value.match(/^color\(srgb ([^)]+)\)$/)
-  if (srgb) {
-    const parts = srgb[1]!.split(/[\s/]+/).filter(Boolean).map(Number)
-    return { r: parts[0]! * 255, g: parts[1]! * 255, b: parts[2]! * 255, a: parts[3] ?? 1 }
-  }
-  const oklab = value.match(/^oklab\(([^)]+)\)$/)
-  if (oklab) return fromOklab(oklab[1]!.split(/[\s/]+/).filter(Boolean).map(Number))
-  throw new Error(`cannot measure the colour "${value}": the parser knows rgb(), rgba(), color(srgb …) and oklab()`)
-}
-
-function luminance({ r, g, b }: Rgba): number {
-  const channel = (v: number) => {
-    const s = v / 255
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-}
-
-function contrast(a: Rgba, b: Rgba): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
-  return (hi! + 0.05) / (lo! + 0.05)
-}
-
-function over(fg: Rgba, bg: Rgba, alpha: number): Rgba {
-  const mix = (f: number, b: number) => f * alpha + b * (1 - alpha)
-  return { r: mix(fg.r, bg.r), g: mix(fg.g, bg.g), b: mix(fg.b, bg.b), a: 1 }
-}
-
-/** The first opaque thing behind an element — what a reader is actually looking through to. */
-function surfaceBehind(element: Element): Rgba {
-  for (let node: Element | null = element; node; node = node.parentElement) {
-    const background = parseColor(getComputedStyle(node).backgroundColor)
-    if (background.a > 0) return background
-  }
-  throw new Error('nothing opaque behind the element to measure against')
-}
-
-/** Every `opacity` between an element and the page, multiplied — the way the compositor sees it. */
-function opacityOf(element: Element): number {
-  let total = 1
-  for (let node: Element | null = element; node; node = node.parentElement) {
-    total *= Number(getComputedStyle(node).opacity)
-  }
-  return total
-}
-
-/**
- * The ratio a reader gets: the declared colour flattened through its own alpha AND its opacity.
- *
- * `surfaceOf` IS A PARAMETER BECAUSE A FOCUS RING IS NOT PAINTED ON WHAT ITS TEXT IS PAINTED ON,
- * and this cost a red test to notice. The active chip paints its own `bg-ink`, so a surface walk
- * that starts at the element itself stops there and measures the accent ring against ink: 2.81:1,
- * the same number Task 2 measured inside the dark bar, and a failure. The ring is not on the chip.
- * `outline-offset-2` holds it 2px clear of the border box, so the pixels on both sides of it are
- * the paper behind the chip's PARENT — 5.58:1. Which surface is right depends on the offset being
- * positive, which is asserted immediately before the ratio rather than assumed.
- *
- * `AdminHeader.stories.tsx` measures its ring the other way round and is right to: `Sair` has no
- * background of its own, so starting at the element already walks through to the bar's ink.
- */
-function measure(element: Element, property: 'color' | 'outlineColor', surfaceOf: Element = element): number {
-  const surface = surfaceBehind(surfaceOf)
-  const declared = parseColor(getComputedStyle(element)[property])
-  return contrast(over(declared, surface, declared.a * opacityOf(element)), surface)
-}
+// The arithmetic lives in `.storybook/contrast.ts`, shared by every story on the branch that has
+// to assert a ratio for itself. It was six copies until PR 4 Task 3, and by then they had
+// diverged; the note at the top of that file records what the divergence was and what it cost.
 
 /**
  * The catalogue as the panel sees it: everything the shop's fixtures hold, INCLUDING the inactive
@@ -273,6 +173,16 @@ export const MeasuresItsMutedText: Story = {
     const type = canvas.getAllByText('físico')[0]!
     await expect(opacityOf(type)).toBeCloseTo(0.7, 5)
     await expect(measure(type, 'color')).toBeGreaterThanOrEqual(4.5)
+
+    // THE UPPER BOUND, and it is here to hold the shared helper rather than the design. Every
+    // ratio above is a `>=`, so arithmetic that errs HIGH passes all of them: deleting the alpha
+    // compositing out of `over()` in `.storybook/contrast.ts` left the whole suite green, because
+    // an uncomposited muted colour is just the full-strength one and reads as more legible, not
+    // less. Relational rather than a magic number: the product name next to it is full-opacity ink
+    // on the same paper, and muted text that measures the same as unmuted text is not being
+    // measured through its opacity at all.
+    const unmuted = canvas.getByText('Carta escrita à mão')
+    await expect(measure(header, 'color')).toBeLessThan(measure(unmuted, 'color'))
 
     const toggle = canvas.getAllByRole('switch')[0]!
     await expect(getComputedStyle(toggle).outlineStyle).toBe('none')
