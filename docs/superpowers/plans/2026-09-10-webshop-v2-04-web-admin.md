@@ -12,7 +12,13 @@
 
 **Constraints:** `docs/superpowers/plans/2026-09-09-webshop-v2-web-constraints.md` — **read it before Task 1 and treat it as part of this plan.** It is the measured output of PR 3's thirteen tasks: which axe rules can actually fire, what the copy scanner sees, which assertion idioms are silently inert, and the traps that cost that branch real time.
 
-**Prototype:** `docs/superpowers/plans/2026-09-09-webshop-v2-03-prototype-extract.md` covers the shop. The admin screens are in the same `.dc.html`, lines ~319–584, and have the same two properties: **no Tailwind and no semantic HTML.** Extract them the same way — the copy verbatim, the structure as a derivation.
+**Prototype:** `docs/superpowers/plans/2026-09-10-webshop-v2-04-prototype-extract.md`, lines 319–583 of the `.dc.html`. **Read it before Task 1.**
+
+⚠️ **Three things I asserted when commissioning that extract turned out to be wrong, and the corrections matter:**
+
+1. **"No semantic HTML" is false for the admin.** It ships 13 `<label>`s (all wrapping their control, so the association is valid), 13 `<input>`s, 2 `<select>`s, 2 `<textarea>`s, 3 `<h1>`s and an `<h2>`. What is genuinely missing: `<form>`, `<button>`, `<a href>`, `<nav>`, `<header>`, `<main>`, `<table>`, `<p>`, all ARIA, and every `id`/`htmlFor`. Zero `class=` still holds.
+2. **The `∞` marks DIGITAL in the prototype, not made-to-order** (`it.type === "digital" ? "∞" : it.stock`). The spec says made-to-order, and **the spec is right**: the model is `stock: number | null` where `null` means no limit, and the prototype's version is a coincidence of its own seed — it would print `999` for a digital product that has stock and `2` for the piece that actually is made to order. **Render `∞` when `stock === null`.**
+3. **The admin's gutter is not the shop's.** It uses `clamp(16px,4vw,40px)` (×7) and `clamp(16px,4vw,32px)` (×1); the shop's `--spacing-gutter` appears nine times and never inside the admin. Decide in Task 2: a second token, or normalise to one. Do not silently reuse `px-gutter` — the admin would get 24px wider padding than drawn.
 
 ## Constraints specific to this PR
 
@@ -23,6 +29,27 @@
 - **This PR restores the e2e admin test** that PR 3 skipped with `test.skip(true, 'the admin app is deleted in PR 3 and rebuilt in PR 4')`. That skip is a tracked commitment; closing it is part of this PR, not PR 5.
 
 ---
+
+## Corrections and decisions the extract forces
+
+- **The `Idiomas` column stays dropped**, and the extract confirms why it was ever there: it is the design's only use of accent as a *status* colour. spec:221 already dropped it because the schema requires both languages, so the "missing" state is unreachable. Do not re-add it on seeing it in the prototype.
+- **The order detail's CPF row is deleted.** The prototype's fixtures carry `["CPF", "042.118.***-**"]` on all four orders and render it as the third of four contact rows — but spec decision 3 removed CPF from the checkout, so it is never collected. **A field that is never collected cannot be displayed.** Drop the row.
+- **Pix/boleto vocabulary** appears in the orders fixture (`"Stripe · boleto"`, `"Stripe · Pix"`) and must not be transcribed — card only, spec decision 2.
+- **The i18n key collision is real and needs a shape, not a workaround.** The form's PT and EN columns label their fields in the language of the column (`Nome`/`Name`, `Descrição`/`Description`, `Chave`/`Key`). Under this project's rule — the key IS the English sentence, one instance — both columns collapse to `Name`. The design already shows the answer in `Alt (PT)` / `Alt (EN)`: **key them `Name (PT)` / `Name (EN)`** and so on. Anything else either duplicates a key or lies about which field is which.
+- **`∞` is a symbol with no accessible name.** Whatever it renders as visually, a screen reader must hear "made to order" or equivalent.
+- **The four spec inputs have no labels at all** — placeholder only, which is 16 axe violations on a four-spec product and the densest accessibility problem in the admin.
+- **The prototype's `save()` IS the validation**, and it is not validation: an empty slug becomes the literal string `sem-identificador`, a non-numeric price becomes `0`, and there is no uniqueness check — a new draft whose slug matches an existing id concatenates into two records with the same id. Its own header says "Os dois idiomas são obrigatórios" and nothing enforces it. **Validate against `productInputSchema`**, which already exists.
+- **Two states, three words:** the table says `Ativo`/`Inativo` and the form's select says `Ativo na loja`/`Desabilitado`. Pick one pair.
+- **The orders list has no selected state at all** — `o.select` writes `state.order` and nothing reads it. Since selection lives in the URL (`?order=`), the selected row needs a visible and announced state that the design does not provide.
+- **The orders list column carries an unconditional `border-right`**, the same dangling edge the shop's two heroes had. PR 3 fixed those with the hairline grid rather than a media query; do the same.
+
+## Contrast: the paper rules do not apply inside the dark bar
+
+The admin bar is **paper-on-ink**, which inverts every ratio this project has measured. The extract measured both directions at the same opacity: `.5` is **4.78:1 on ink (passes)** and 3.28:1 on paper (fails); `.6` is 6.30 versus 4.47. So the branch's standing rule — "below `opacity-65` does not clear 4.5:1" — **is a paper rule and is wrong inside the bar**; applying it by reflex lightens `Painel` and `Ver a loja` for no reason.
+
+- The bar's one real failure is `rgba(244,240,230,.35)` at **2.98:1**, two hundredths under the 3:1 that SC 1.4.11 needs. `.4` gives 3.36.
+- **Every `AdminHeader` story must paint an ink background**, or axe measures the text against the story canvas and reports both sides inverted.
+- On the paper side the damage is larger and was not in my briefing: the table's column headers (`opacity:.5` → 3.28:1) and **ten sites at `.55`** (3.82:1) fail AA, plus six at `.6` (4.47, failing by 0.03). The form's 13 labels at `.75` (7.39:1) pass and match the existing `FieldLabel` exactly — use it.
 
 ## What is genuinely new here
 
