@@ -54,7 +54,19 @@ const urls = (spy: ReturnType<typeof stubFetch>) => spy.mock.calls.map(([input])
 const lastInit = (spy: ReturnType<typeof stubFetch>) => spy.mock.calls.at(-1)![1]!
 
 beforeEach(() => localStorage.clear())
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+
+/**
+ * RTL's `waitFor` cannot drive vitest's fake timers — its detection looks for a `jest` global that
+ * is not here — so the polling tests below step the clock explicitly, the way `containers.test.tsx`
+ * does. `tick(0)` flushes the promise chain without moving time.
+ */
+async function tick(ms: number) {
+  await act(async () => void (await vi.advanceTimersByTimeAsync(ms)))
+}
 
 describe('useAdminProducts', () => {
   it('unwraps { products } and asks the admin endpoint', async () => {
@@ -383,20 +395,6 @@ describe('useProduct', () => {
 })
 
 describe('useOrder', () => {
-  it('asks once and gives up, under the retry policy the app actually runs', async () => {
-    // The client here is `main.tsx`'s, not the shop suite's: `retryQuery` repeats a 5xx three times
-    // over about seven seconds, and `useOrder`'s own `retry: false` is what overrides it. Every
-    // container test builds a client that already refuses to retry anything, so this option cannot
-    // fail there — it is the harness agreeing with the code rather than checking it.
-    const spy = stubFetch(() => json({ error: { code: 'INTERNAL', message: 'boom' } }, 500))
-    const client = new QueryClient({ defaultOptions: { queries: { retry: retryQuery } } })
-    const { result } = render(() => useOrder(413, 'cs_test'), client)
-
-    await waitFor(() => expect(result.current.isError).toBe(true))
-
-    expect(spy.mock.calls).toHaveLength(1)
-  })
-
   it('keeps the order it already loaded when polling is switched off', async () => {
     // `poll` is a parameter and NOT part of the query key, and that is the whole reason it exists:
     // `DoneRoute` stops the polling by flipping it, and stopping by passing `null` instead would
@@ -439,5 +437,73 @@ describe('useOrder', () => {
     await waitFor(() => expect(wrong.result.current.isError).toBe(true))
     expect(wrong.result.current.data).toBeUndefined()
     expect(urls(spy)).toHaveLength(2)
+  })
+})
+
+describe('useOrder, when the lookup fails', () => {
+  const failing = (status: number, code: string) => () => json({ error: { code, message: 'no' } }, status)
+
+  /** The shared policy, wired exactly as `main.tsx` wires it. */
+  const appClient = () => new QueryClient({ defaultOptions: { queries: { retry: retryQuery } } })
+  /** Retries off, so the ONLY thing that can produce a second request is `refetchInterval`. */
+  const noRetryClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  it('does not repeat a lookup the API has already refused', async () => {
+    // The behaviour the hook's old `retry: false` existed to protect, now protected by the shared
+    // policy instead. No clock is advanced, so what is measured here is the RETRY rule alone —
+    // the interval cannot have fired yet.
+    vi.useFakeTimers()
+    const spy = stubFetch(failing(404, 'ORDER_NOT_FOUND'))
+    render(() => useOrder(411, 'cs_test'), appClient())
+
+    await tick(0)
+
+    expect(spy.mock.calls).toHaveLength(1)
+  })
+
+  it('does repeat a lookup that failed on the server’s side', async () => {
+    // The inversion. `retry: false` predated `retryQuery` by three commits and suppressed this
+    // along with the 404 it was aimed at: a 500 or a dropped connection can be over by the next
+    // attempt, and this is the query whose whole job is to keep asking.
+    vi.useFakeTimers()
+    const spy = stubFetch(failing(500, 'INTERNAL'))
+    render(() => useOrder(411, 'cs_test'), appClient())
+
+    await tick(0)
+    expect(spy.mock.calls).toHaveLength(1)
+
+    // react-query's first backoff is a second.
+    await tick(1100)
+    expect(spy.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('keeps polling after a first lookup that failed, rather than promising a refresh it never makes', async () => {
+    // THE BUG. `refetchInterval` read `data?.status`, and a first lookup that fails leaves no data
+    // at all — so the interval returned false, polling never started, and the page went on saying
+    // "esta página se atualiza sozinha" for thirty seconds while doing nothing. Retries are off
+    // here so that a second request can only have come from the interval.
+    vi.useFakeTimers()
+    const spy = stubFetch(failing(500, 'INTERNAL'))
+    render(() => useOrder(411, 'cs_test'), noRetryClient())
+
+    await tick(0)
+    expect(spy.mock.calls).toHaveLength(1)
+
+    await tick(2100)
+    expect(spy.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('stops polling when the failure is the API’s final answer', async () => {
+    // The other half, and the one that keeps the fix above from becoming fifteen requests for an
+    // order that does not exist. A 4xx will say the same thing every time — the same reasoning
+    // `retryQuery` already applies one layer down, which is why both read one predicate.
+    vi.useFakeTimers()
+    const spy = stubFetch(failing(404, 'ORDER_NOT_FOUND'))
+    render(() => useOrder(411, 'cs_test'), noRetryClient())
+
+    await tick(0)
+    await tick(10_000)
+
+    expect(spy.mock.calls).toHaveLength(1)
   })
 })

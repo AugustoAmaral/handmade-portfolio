@@ -7,7 +7,7 @@ import type {
   PublicProduct,
 } from '@shop/shared'
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ApiError, api } from './client'
+import { type ApiError, api, isFinalAnswer } from './client'
 
 // EVERY public GET ANSWERS IN AN ENVELOPE, and these hooks are where it comes off. `products.ts`
 // replies `{ products }`, `{ product }` and `orders.ts` replies `{ order }` — one named key, never
@@ -36,6 +36,11 @@ export function useProduct(slug: string) {
 // wait at about thirty seconds, and the query key is built from the credential, so a container that
 // tried to stop by passing `null` would change the key and throw away the order it had already
 // loaded. It defaults to true, so the polling contract is unchanged for anything that ignores it.
+//
+// This query carries NO `retry` of its own. It used to carry `retry: false`, written three commits
+// before `retryQuery` existed and never justified; once the shared policy arrived it was suppressing
+// the repeat of a 5xx — on the one query whose entire job is to keep asking — to prevent the repeat
+// of a 4xx that `retryQuery` already prevents.
 const DONE_POLL_MS = 2000
 
 export function useOrder(orderNumber: number | null, sessionId: string | null, poll = true) {
@@ -45,8 +50,18 @@ export function useOrder(orderNumber: number | null, sessionId: string | null, p
       (await api<{ order: PublicOrder }>(`/api/orders/${orderNumber}?session_id=${encodeURIComponent(sessionId!)}`))
         .order,
     enabled: orderNumber != null && sessionId != null,
-    refetchInterval: (query) => (poll && query.state.data?.status === 'pending' ? DONE_POLL_MS : false),
-    retry: false,
+    refetchInterval: (query) => {
+      if (!poll) return false
+      const { data, error } = query.state
+      if (data) return data.status === 'pending' ? DONE_POLL_MS : false
+      // NO DATA IS NOT A SETTLED ORDER. Reading `data?.status` on its own made a first lookup that
+      // FAILED indistinguishable from one that came back already paid: the interval returned false,
+      // nothing ever asked again, and the page went on promising "esta página se atualiza sozinha"
+      // for the rest of the thirty seconds while doing nothing at all. Anything that can be over by
+      // the next tick earns another tick; a final answer does not, and stopping on it is what keeps
+      // this from becoming fifteen requests for an order that does not exist.
+      return isFinalAnswer(error) ? false : DONE_POLL_MS
+    },
   })
 }
 
