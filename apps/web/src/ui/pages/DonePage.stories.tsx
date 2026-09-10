@@ -179,3 +179,62 @@ export const InternationalShippingIsNamedInTheReadersLanguage: Story = {
     await expect(valueOf(canvas, 'Delivery').textContent).not.toBe(SHIPPING_METHODS.intl.name.pt)
   },
 }
+
+/**
+ * THE MONEY WAS TAKEN AND THE PIECE WAS NOT THERE. `ADMIN_ORDER_TRANSITIONS` allows
+ * `oversold -> shipped`, so this order is still going to be made and posted — it is a DELAY, and
+ * the two wrong screens for it are the confirmed one (which promises a parcel on the normal
+ * schedule) and a refund notice (which offers to undo a purchase nobody asked to undo). The
+ * absences below are what say so: this screen must be neither of the other two.
+ */
+export const OversoldIsADelay: Story = {
+  args: { order: { ...publicPaidOrder, status: 'oversold' } },
+  play: async ({ canvas }) => {
+    const heading = canvas.getByRole('heading', { level: 1 })
+    // The first line is unchanged and that is the point: the order really was placed.
+    await expect(heading.textContent).toBe('Pedido feito.Vai demorar um pouco mais.')
+    await expect(heading.querySelector('em')?.textContent).toBe('Vai demorar um pouco mais.')
+    canvas.getByText(
+      'O pagamento está confirmado; o que faltou foi a peça, que acabou no estoque enquanto o cartão passava. Como tudo aqui é feito à mão, eu faço a sua do zero — leva mais que os 5 dias úteis de sempre, e te escrevo por e-mail em até 2 dias úteis com a data em que despacho. Não precisa fazer nada.',
+    )
+    // Not the confirmed screen, which this status rendered until now.
+    await expect(canvas.queryByText('Agora é minha vez.')).toBeNull()
+    // And not the expired one either. These two states arrived together and the cheap way to write
+    // them is one reassuring paragraph that fits both — which would be false in one direction each
+    // way, since only one of them charged a card.
+    await expect(canvas.queryByText('Não foi cobrado nada.')).toBeNull()
+    // The card DID clear, so this is the delayed state that still claims the money.
+    await expect(valueOf(canvas, 'Total pago').textContent).toBe(formatPrice(publicPaidOrder.totalCents, 'pt'))
+  },
+}
+
+/**
+ * THE SESSION LAPSED AND NOTHING WAS EVER CHARGED, which makes this the one state where the
+ * headline's FIRST line is false as well: there is no purchase to have been placed. Spread off the
+ * PENDING fixture rather than the paid one, because that is what an expired order is — a pending
+ * one whose Stripe session ran out — and because its total is a different number, so an assertion
+ * reading the wrong order's money cannot pass by coincidence.
+ *
+ * `gaveUp` is true and that is the realistic shape rather than an extra: this screen is reached by
+ * leaving the page open past the session, which is well past the thirty seconds the container
+ * polls for. It also pins the branch order — a page that consulted `gaveUp` before the status
+ * would answer `Ainda confirmando.` to an order that is never going to confirm.
+ */
+export const ExpiredWasNeverPaid: Story = {
+  args: { order: { ...publicPendingOrder, status: 'expired' }, gaveUp: true },
+  play: async ({ canvas }) => {
+    const heading = canvas.getByRole('heading', { level: 1 })
+    await expect(heading.textContent).toBe('Este pedido expirou.Não foi cobrado nada.')
+    canvas.getByText(
+      'A página de pagamento do Stripe tem prazo, e o desta aqui venceu antes de o cartão passar — não ficou nada pendente do seu lado nem do meu. Se a peça ainda estiver no catálogo, é só colocar na sacola de novo.',
+    )
+    await expect(canvas.queryByText(/Pedido feito/)).toBeNull()
+    await expect(canvas.queryByText('Ainda confirmando.')).toBeNull()
+    await expect(canvas.queryByText('Vai demorar um pouco mais.')).toBeNull()
+    // Nothing was charged, so nothing on the page may say it was.
+    await expect(canvas.queryByText('Total pago')).toBeNull()
+    await expect(valueOf(canvas, 'Total').textContent).toBe(formatPrice(publicPendingOrder.totalCents, 'pt'))
+    // The way back to the piece is the only control on the page, and it is what this state owes.
+    await expect(canvas.getByRole('link', { name: 'Voltar ao catálogo' })).toHaveAttribute('href', '/')
+  },
+}
