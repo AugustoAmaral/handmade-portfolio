@@ -122,6 +122,10 @@ export function ProductRow({
   // empty case the prototype draws cannot arrive.
   const otherName = product.name[lang === 'pt' ? 'en' : 'pt']
 
+  // `row`, `rowheader` and `cell` are spelled out for the reason `ProductsTable`'s note at the
+  // `<table>` gives, and carry the same caveat: no test in this repo can tell whether they are
+  // load-bearing, because neither testing-library nor axe reads the browser's accessibility tree.
+  // Deleting them leaves every story green. That is a gap in the evidence, not a licence.
   return (
     <tr role="row" className={`${ROW_GRID} border-ink/20 border-b py-[18px] font-mono text-[13px]`}>
       <th role="rowheader" scope="row" className="min-w-0 text-left font-normal">

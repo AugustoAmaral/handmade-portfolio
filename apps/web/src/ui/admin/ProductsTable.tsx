@@ -71,6 +71,17 @@ export function ProductsTable({
 
   return (
     <div className="overflow-x-auto">
+      {/* THE ROLES BELOW ARE A DECISION, NOT A MEASUREMENT, and nothing in this repo can turn them
+          into one. They are here because the rows carry `display:grid` and the levels above them
+          carry `display:block`, and a table element whose `display` is not `table` or `table-*`
+          has historically lost its implicit role in Blink and WebKit.
+
+          Whether Chromium still strips it TODAY is unverified. `getByRole` resolves roles from tag
+          names through the HTML-AAM mapping, and so does axe — neither reads the browser's own
+          accessibility tree — so deleting every `role` attribute in this file and in `ProductRow`
+          reddens nothing at all. A green suite is not evidence that they are unnecessary, and
+          removing them on that basis would be reading the gate backwards. Anyone who wants to drop
+          them needs a screen reader or a platform AX dump, not a test run. */}
       <table role="table" className={`block w-full ${MIN_TABLE_WIDTH}`}>
         {/* The table's accessible name. Visually hidden because the page's `<h1>` already says
             `Produtos` right above it and a second one on the screen is noise; a table with no name
