@@ -6,7 +6,7 @@ import type {
   PublicOrder,
   PublicProduct,
 } from '@shop/shared'
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ApiError, api, isFinalAnswer } from './client'
 
 // EVERY public GET ANSWERS IN AN ENVELOPE, and these hooks are where it comes off. `products.ts`
@@ -146,6 +146,15 @@ export function useAdminOrders(status?: AdminOrderFilter) {
     queryKey: [...ADMIN_ORDERS_KEY, status ?? null],
     queryFn: async () =>
       (await api<{ orders: AdminOrder[] }>(`/api/admin/orders${status ? `?status=${status}` : ''}`)).orders,
+    // THE FILTER CHANGES THE KEY, AND WITHOUT THIS THAT EMPTIES THE SCREEN. A new key has no data,
+    // so `isPending` is true and the container falls back to `LoadingPage` — which unmounts the
+    // `<select>` the reader is holding, drops focus to the body, and replaces a list they were
+    // reading with the word "Carregando" for as long as one request takes. Task 8 measured it: the
+    // second change of filter in a row could not even be performed, because the control had gone.
+    // Keeping the previous rows is what makes changing a filter a change of contents rather than a
+    // change of screen. It applies to the FIRST load too, where there is no previous page and
+    // `isPending` still does its job.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -160,6 +169,39 @@ export function useAdminOrders(status?: AdminOrderFilter) {
 export interface SaveProductVars {
   id?: string
   input: ProductUpdateInput
+}
+
+/**
+ * A loaded product as the WRITE model, which is the conversion the products table needs and the
+ * form does not: flipping a status chip is a whole-document PUT of a product nobody opened.
+ *
+ * IT EXISTS BECAUSE THE PUT REPLACES THE DOCUMENT AND THE TABLE SHOWS FIVE COLUMNS. `doc.set(input)`
+ * takes whatever `productUpdateSchema` parsed, and that schema gives `featured` a default of
+ * `false`, `subtitle` a default of two empty strings and `specs` a default of `[]` — so a body
+ * assembled from the four fields visible in a row would unfeature the piece on the shop's home
+ * page, blank its subtitle and drop its whole ficha técnica, silently, as the price of toggling it
+ * off for an afternoon.
+ *
+ * `photos` IS DELIBERATELY ABSENT rather than mapped. The PUT treats the key as optional and leaves
+ * the stored photos alone when it is missing; including it would make every toggle assert a
+ * permutation it has no reason to have an opinion about.
+ *
+ * The localised pairs are COPIED rather than aliased: the fixtures behind the tests are deep-frozen
+ * and this value is handed to callers that are allowed to edit it.
+ */
+export function productInputFrom(product: PublicProduct): ProductUpdateInput {
+  return {
+    slug: product.slug,
+    name: { ...product.name },
+    description: { ...product.description },
+    subtitle: { ...product.subtitle },
+    priceCents: product.priceCents,
+    type: product.type,
+    stock: product.stock,
+    specs: product.specs.map((spec) => ({ key: { ...spec.key }, value: { ...spec.value } })),
+    featured: product.featured,
+    active: product.active,
+  }
 }
 
 export function useSaveProduct() {

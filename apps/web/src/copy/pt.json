@@ -105,6 +105,7 @@
   "I do not have enough of one of the pieces. Lower the quantity in the bag.": "Não tenho estoque suficiente de uma das peças. Diminua a quantidade na sacola.",
   "The payment provider did not answer. Try again in a moment.": "A operadora de pagamento não respondeu. Tente de novo em instantes.",
   "Check the fields marked above.": "Confira os campos marcados acima.",
+  "This identifier is already in use.": "Esse identificador já está em uso.",
   "Something broke on my side. Try again in a moment.": "Algo quebrou do meu lado. Tente de novo em instantes.",
   "Your order": "Seu pedido",
   "Shipping ({{method}})": "Frete ({{method}})",

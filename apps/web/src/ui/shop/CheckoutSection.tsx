@@ -116,6 +116,11 @@ export function useErrorMessage(): (code: string) => string {
         return t('The payment provider did not answer. Try again in a moment.')
       case 'VALIDATION':
         return t('Check the fields marked above.')
+      // The admin's product form, and the one code on the branch that arrives with no `fieldErrors`
+      // to hang it on: a 409 from the unique index. The default below returns the CODE itself, so
+      // without this line the panel prints SLUG_TAKEN at the one person who reads it.
+      case 'SLUG_TAKEN':
+        return t('This identifier is already in use.')
       case 'INTERNAL':
         return t('Something broke on my side. Try again in a moment.')
       default:
