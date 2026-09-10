@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '../../src/app/api/client'
+import { ApiError, retryQuery } from '../../src/app/api/client'
 import {
   useAdminLogin,
   useAdminOrders,
@@ -10,10 +10,12 @@ import {
   useDeletePhoto,
   useDeleteProduct,
   useMarkShipped,
+  useOrder,
+  useProduct,
   useSaveProduct,
   useUploadPhoto,
 } from '../../src/app/api/queries'
-import { adminOrders, paidOrder, shippedOrder } from '../../src/fixtures/orders'
+import { adminOrders, paidOrder, publicPaidOrder, shippedOrder } from '../../src/fixtures/orders'
 import { inactiveGuide, letter } from '../../src/fixtures/products'
 
 /**
@@ -347,5 +349,95 @@ describe('useMarkShipped', () => {
     })
 
     expect(JSON.parse(String(lastInit(spy).body))).toEqual({ status: 'shipped', trackingCode: 'BR123456789BR' })
+  })
+})
+
+/**
+ * THE PUBLIC HOOKS, AND ONLY WHAT THEIR CONSUMERS CANNOT SEE.
+ *
+ * `containers.test.tsx` drives these four through the real containers with the real envelopes, so
+ * the envelope unwrapping, `enabled`, the poll stopping on a settled status and the `poll` switch
+ * are all pinned there already — measured, not assumed: mutating each of those reddens between one
+ * and twenty-six of its tests. Restating them here would add a second assertion for a guard that is
+ * already guarded, which is the thing this branch deletes rather than keeps.
+ *
+ * What is left is the set a container test STRUCTURALLY cannot reach, which is why it survived: the
+ * shop's own `renderShop` builds a QueryClient with `retry: false` for every query, so the one
+ * `useOrder` sets for itself is invisible to it; and a query key can only be tested where two
+ * observers share one cache.
+ */
+describe('useProduct', () => {
+  it('encodes the slug, so a typed address cannot reshape the request path', async () => {
+    // `ProductRoute` hands `useParams()` straight through, and a route param is whatever the
+    // visitor typed. A browser flattens `/exhibit/../admin` before routing, but it does NOT flatten
+    // `%2E%2E%2F` — the router decodes that back to `../`, and an unencoded slug then builds
+    // `/api/products/../admin/products`, which `fetch` resolves to `/api/admin/products`. Encoding
+    // is what keeps a slug a slug instead of a way to pick the endpoint.
+    const spy = stubFetch(() => json({ error: { code: 'PRODUCT_NOT_FOUND', message: 'gone' } }, 404))
+    const { result } = render(() => useProduct('../admin/products'))
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
+
+    expect(urls(spy)).toEqual(['http://localhost:3001/api/products/..%2Fadmin%2Fproducts'])
+  })
+})
+
+describe('useOrder', () => {
+  it('asks once and gives up, under the retry policy the app actually runs', async () => {
+    // The client here is `main.tsx`'s, not the shop suite's: `retryQuery` repeats a 5xx three times
+    // over about seven seconds, and `useOrder`'s own `retry: false` is what overrides it. Every
+    // container test builds a client that already refuses to retry anything, so this option cannot
+    // fail there — it is the harness agreeing with the code rather than checking it.
+    const spy = stubFetch(() => json({ error: { code: 'INTERNAL', message: 'boom' } }, 500))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: retryQuery } } })
+    const { result } = render(() => useOrder(413, 'cs_test'), client)
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
+
+    expect(spy.mock.calls).toHaveLength(1)
+  })
+
+  it('keeps the order it already loaded when polling is switched off', async () => {
+    // `poll` is a parameter and NOT part of the query key, and that is the whole reason it exists:
+    // `DoneRoute` stops the polling by flipping it, and stopping by passing `null` instead would
+    // change the key and throw away the order on screen. One client, because a key can only be
+    // tested by a second observer that has to find the first one's cache — with a client each,
+    // both fetch and the key is never consulted. `staleTime` keeps a same-key mount from
+    // refetching on its own, so the count below means what it says.
+    const spy = stubFetch(() => json({ order: publicPaidOrder }))
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    })
+    const polling = render(() => useOrder(411, 'cs_test', true), client)
+    await waitFor(() => expect(polling.result.current.isSuccess).toBe(true))
+
+    const stopped = render(() => useOrder(411, 'cs_test', false), client)
+
+    expect(stopped.result.current.data).toEqual(publicPaidOrder)
+    expect(spy.mock.calls).toHaveLength(1)
+  })
+
+  it('does not let a second session id ride the first one’s cached order', async () => {
+    // The session id is the order's password — spec makes it the reason an order number cannot be
+    // enumerated — so it has to be part of the key, not just of the URL. Dropping it and the cache
+    // answers `?order=411&session_id=anything` with the order a correct credential already loaded,
+    // in a tab where the number never changed. `staleTime` again, so what is measured is the cache
+    // decision itself rather than a refetch quietly covering for it.
+    const spy = stubFetch((url) =>
+      url.includes('cs_right')
+        ? json({ order: publicPaidOrder })
+        : json({ error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' } }, 404),
+    )
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    })
+    const right = render(() => useOrder(411, 'cs_right'), client)
+    await waitFor(() => expect(right.result.current.isSuccess).toBe(true))
+
+    const wrong = render(() => useOrder(411, 'cs_wrong'), client)
+
+    await waitFor(() => expect(wrong.result.current.isError).toBe(true))
+    expect(wrong.result.current.data).toBeUndefined()
+    expect(urls(spy)).toHaveLength(2)
   })
 })
