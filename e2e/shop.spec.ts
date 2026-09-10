@@ -143,6 +143,126 @@ test('a digital-only bag is charged no postage, and one physical piece brings th
   await expect(page.getByRole('button', { name: /^Pagar/ })).toHaveAccessibleName(/^Pagar R\$\s*70,00$/)
 })
 
+/**
+ * THE ORDERS `apps/api/src/dev-e2e.ts` SEEDS, restated here rather than imported for the reason
+ * `PANEL_ROWS` below is restated: the module that decides them boots mongoose and an in-memory
+ * Mongo, and neither belongs in a Playwright worker.
+ *
+ * NO TWO OF THEM SHARE A FIELD ANY ASSERTION NAMES — not the number, the buyer, the money, the
+ * status, the shipping method or the day. That is a rule and not decoration. `apps/web/src/
+ * fixtures/orders.ts` carries the same rule and `test/fixtures.test.ts` pins it, because it was
+ * learned the hard way twice in one task: three order fixtures shared one total, so "it shows THIS
+ * order's total" passed on three other orders, and every order was paid a minute after it was
+ * created, so rendering `paidAt` where `createdAt` was meant printed the identical date.
+ */
+const ORDERS = {
+  // The wait, and the only order in the panel's default view that nothing can be done about.
+  pending: { number: 1001, session: 'cs_e2e_1001', buyer: 'Marta Rezende', total: /R\$\s*172,00/ },
+  // The confirmed thank-you page, and the order the dispatch test ships.
+  paid: { number: 1002, session: 'cs_e2e_1002', buyer: 'Otávio Lins', total: /R\$\s*141,00/ },
+  // Paid, and the piece ran out from under it afterwards: a delay, not a failure.
+  oversold: { number: 1003, session: 'cs_e2e_1003', buyer: 'Sofia Quintela', total: /R\$\s*142,00/ },
+  // Never paid, and the one status `GET /api/admin/orders` hides when no filter is asked for.
+  expired: { number: 1004, session: 'cs_e2e_1004', buyer: 'Décio Rabelo', total: /R\$\s*251,00/ },
+}
+
+/**
+ * `ui/routes.ts`'s `thanks(orderNumber, sessionId)`. The session id is a separate argument rather
+ * than read off the order, so one order can be asked for with another order's credential.
+ */
+function thanks(order: { number: number; session: string }, session: string = order.session): string {
+  return `/thanks?order=${order.number}&session_id=${encodeURIComponent(session)}`
+}
+
+/**
+ * `GET /api/orders/:orderNumber` — the one public endpoint Task 1's audit found with no e2e
+ * coverage at all, and unreachable until this boot seeded an `Order`, because making one the
+ * ordinary way needs a Stripe session and this boot has no key that can create one.
+ *
+ * WHAT ONLY THIS TEST RUNS is the join: `toPublicOrder`'s output, off a real Mongo document,
+ * arriving in `DonePage`. Every other test of this page builds `PublicOrder` by hand —
+ * `done-copy.test.tsx` and every story spread `publicPaidOrder` — so the `<dl>` below has never
+ * once been drawn from a document the API serialised.
+ *
+ * THE SESSION ID IS THE ORDER'S PASSWORD (spec: it is what stops order numbers being enumerated),
+ * and the second half of this test is the only place that rule has been checked from a browser.
+ * The wrong credential it uses is a REAL session id belonging to a DIFFERENT order, which is what
+ * separates the two ways of getting the lookup wrong: a `findOne` on the number alone answers with
+ * this order, and one on the session alone answers with #MHP-1004. A made-up string would let both
+ * mutations through the same 404.
+ */
+test('the thank-you page reads an order back, and the session id is what unlocks it', async ({ page }) => {
+  await page.goto(thanks(ORDERS.paid))
+
+  await expect(page.getByText(`Pedido #MHP-${ORDERS.paid.number}`, { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Agora é minha vez.')
+
+  // THE WHOLE TABLE, AS A LIST, so the assertion also says there is no fourth row: `DonePage`
+  // drops the delivery and the ETA together when there is no shipping method, and an order that
+  // grew a row would pass every `nth()` assertion below it.
+  await expect(page.getByRole('term')).toHaveText(['Total pago', 'Envio', 'Prazo estimado'])
+  const values = page.getByRole('definition')
+  // The money the API worked out, not the money the browser was told: `computeTotals` prices this
+  // order in the boot and nothing in the request says what it should cost.
+  await expect(values.nth(0)).toHaveText(ORDERS.paid.total)
+  // SEDEX and its own window, where #MHP-1003 is PAC — the two rows below could otherwise be
+  // satisfied by the wrong order's document.
+  await expect(values.nth(1)).toHaveText('Correios SEDEX')
+  await expect(values.nth(2)).toHaveText('3 a 5 dias úteis')
+
+  const refused = page.waitForResponse((r) => r.url().includes(`/api/orders/${ORDERS.paid.number}`))
+  await page.goto(thanks(ORDERS.paid, ORDERS.expired.session))
+  expect(
+    (await refused).status(),
+    'GET /api/orders answered something other than 404 for an order number carrying another order’s session id',
+  ).toBe(404)
+
+  // ANCHORED ON THE ANSWER AND NOT ON THE PAGE, which is a departure from Task 1's fix and has to
+  // be. That fix was to wait for the screen's own `<h1>` before asserting an absence, because
+  // `toHaveCount(0)` is satisfied by a page that has not painted. Here the `<h1>` does not settle
+  // anything: `/thanks` draws exactly the same screen while a lookup is in flight as it does once
+  // one has been refused, so the 404 above is the only moment at which "nothing is shown" starts
+  // meaning something. And the first half of this test is what proves the eyebrow paints at all.
+  await expect(page.getByText(/^Pedido #MHP-\d+$/)).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Confirmando o pagamento.')
+})
+
+/**
+ * The two screens PR 5's Task 2 wrote, with no end-to-end observation of any kind until now: they
+ * were reachable from a story and from `done-copy.test.tsx`, both of which hand `DonePage` a status
+ * directly. Reaching them from an ADDRESS means an order document really carrying that status.
+ *
+ * THE MONEY LABEL IS THE ASSERTION THAT MATTERS, and it is here because it was wrong in the source
+ * a few commits ago: the page bucketed its statuses as `status !== 'pending'`, so an order nobody
+ * was ever charged for rendered `Total pago` over its total. `oversold` and `expired` are opposite
+ * facts about the same word — the card cleared and the piece did not, against nothing charged at
+ * all — so the pair is what makes either half mean anything.
+ *
+ * `Total` IS ASSERTED EXACTLY. `Total pago` contains it, so a substring match here is the same
+ * green for both states.
+ */
+test('oversold and expired are two different pages, and only one of them claims the money', async ({ page }) => {
+  const headline = page.getByRole('heading', { level: 1 })
+
+  await page.goto(thanks(ORDERS.oversold))
+  await expect(page.getByText(`Pedido #MHP-${ORDERS.oversold.number}`, { exact: true })).toBeVisible()
+  // The first line still says a purchase happened, because one did.
+  await expect(headline).toContainText('Pedido feito.')
+  await expect(headline).toContainText('Vai demorar um pouco mais.')
+  await expect(page.getByRole('term').first()).toHaveText('Total pago')
+  await expect(page.getByRole('definition').first()).toHaveText(ORDERS.oversold.total)
+
+  await page.goto(thanks(ORDERS.expired))
+  await expect(page.getByText(`Pedido #MHP-${ORDERS.expired.number}`, { exact: true })).toBeVisible()
+  // The one state that moves the first line, and asserting that it is GONE is the half that a
+  // headline assertion alone would miss: `Este pedido expirou.` could otherwise sit under it.
+  await expect(headline).not.toContainText('Pedido feito.')
+  await expect(headline).toContainText('Este pedido expirou.')
+  await expect(headline).toContainText('Não foi cobrado nada.')
+  await expect(page.getByRole('term').first()).toHaveText('Total')
+  await expect(page.getByRole('definition').first()).toHaveText(ORDERS.expired.total)
+})
+
 // The credentials `apps/api/src/dev-e2e.ts` seeds. They are defaults in that file rather than
 // constants here on purpose: it is the boot that decides them, and a copy in the spec would be the
 // kind of duplicate this branch has spent a whole task removing.
@@ -276,6 +396,137 @@ test('the photo list the form sends is one the real API accepts', async ({ page 
 
   await page.reload()
   await expect(altOf('Foto principal')).toHaveValue(toggled)
+})
+
+/**
+ * One row of the orders list, found by the order number it prints. Scoped to the list, which is the
+ * only named `<ul>` on the screen — the panel bar beside it is a `<nav>` of bare anchors.
+ */
+function orderRow(page: Page, orderNumber: number) {
+  return page.getByRole('list', { name: 'Pedidos' }).getByRole('listitem').filter({ hasText: `#MHP-${orderNumber}` })
+}
+
+/**
+ * THE THREE FILTER MODES, ANSWERED BY THE REAL API. `admin-containers.test.tsx` already asserts
+ * that the panel ASKS for all three — no parameter, `?status=all`, `?status=<one>` — but it asks a
+ * stub that answers the same five fixtures every time, so nothing anywhere has ever seen the three
+ * questions come back with three different sets of orders. That is the whole property: absent is
+ * NOT a synonym for `all`. `routes/admin/orders.ts` reads a missing `status` as
+ * `{ status: { $ne: 'expired' } }`, `all` as no filter at all, and a named one as itself.
+ *
+ * ASSERTED AS MEMBERSHIP RATHER THAN AS A COUNT for the two modes that can grow. A run with a real
+ * Stripe key unskips the last test in this file, and that test creates a real `pending` order —
+ * so `todos` and the default view gain a row in exactly the environment where the key exists.
+ * `?status=expired` cannot: nothing in this suite can produce an expired order.
+ */
+test('the orders list answers the three filter modes with three different sets', async ({ page }) => {
+  await signIn(page, '/admin/orders')
+  await expect(page.getByRole('heading', { level: 1, name: 'Pedidos' })).toBeVisible()
+
+  // The mode the screen opens in, and it is the API's default rather than a parameter the panel
+  // sends. The three positive rows come FIRST: an empty list satisfies the absence below and
+  // nothing else here, which is the trap Task 1 was caught by.
+  for (const order of [ORDERS.pending, ORDERS.paid, ORDERS.oversold])
+    await expect(orderRow(page, order.number)).toHaveCount(1)
+  await expect(orderRow(page, ORDERS.expired.number)).toHaveCount(0)
+
+  const filter = page.getByLabel('Situação')
+  await filter.selectOption('all')
+  // The same three, plus the one the default view hid — so `all` differs from absent in the one
+  // direction it can, and the list did not simply empty and refill with something else.
+  for (const order of Object.values(ORDERS)) await expect(orderRow(page, order.number)).toHaveCount(1)
+
+  await filter.selectOption('expired')
+  await expect(page.getByRole('list', { name: 'Pedidos' }).getByRole('listitem')).toHaveCount(1)
+  await expect(orderRow(page, ORDERS.expired.number)).toHaveCount(1)
+  // The band's own count, and `exact` is what makes it an assertion: `1 pedido` is the singular
+  // branch, the plural key would print `1 pedidos`, and a substring match is satisfied by both.
+  // `0 para despachar` is `canTransition` agreeing that nothing on this screen can be acted on.
+  await expect(page.getByText('1 pedido · 0 para despachar', { exact: true })).toBeVisible()
+})
+
+/**
+ * `PATCH /api/admin/orders/:id`, which nothing on the branch had ever sent from a browser.
+ *
+ * THE THREE JOINS IT MAKES, none of them available to either side alone. `useMarkShipped` trims the
+ * code and omits it when it is empty, and `admin-containers.test.tsx` asserts the BODY it builds
+ * against a stub; `admin-orders.test.ts` asserts what the API does with a body it wrote itself.
+ * What neither can see is what the field's contents become once they are STORED — so the code is
+ * typed with padding here and read back after a reload, compared exactly. Measured while proving
+ * these assertions can fail: removing either trim ON ITS OWN leaves the stored code clean, because
+ * the other one still runs — so this pins their conjunction, which is the only thing about them
+ * that is true from here, and no other test pins even that. The second join is the
+ * invalidation: the row beside the pane is drawn from the LIST, refetched because the mutation
+ * invalidated it, not from the answer the PATCH gave. The third is not about the dispatch at all —
+ * it is the date beside the order number, which is the only assertion in this file that fails if
+ * `dev-e2e.ts` loses `timestamps: false` and every seeded order silently becomes today's.
+ *
+ * IT IS THE ONE TEST IN THIS FILE THAT CONSUMES ITS FIXTURE. `shipped` has no transition out of it
+ * — `ADMIN_ORDER_TRANSITIONS` gives it an empty list and the API answers 409 — so this order is
+ * dispatched once and `dev-e2e.ts` puts it back on the next boot. Playwright kills the servers it
+ * started, so `npm run e2e` twice in a row is two fresh boots; a dev-e2e process left running by
+ * hand is what keeps the dispatch, and the precondition below says so rather than failing four
+ * assertions later on a missing button.
+ *
+ * THE 409 IS NOT HERE, and it is not an omission. Reaching `INVALID_TRANSITION` through the panel
+ * needs a list that went stale, because `OrderDetail` derives the button from the same
+ * `canTransition` the API checks — and a second Playwright page cannot produce one: `main.tsx`
+ * leaves `refetchOnWindowFocus` at react-query's default, so bringing the first page back to the
+ * front refetches its list, sees `shipped`, and takes the form away before anything can be
+ * confirmed. Shipping the order out of band instead would leave only the alert
+ * `admin-containers.test.tsx` already asserts against a stubbed 409.
+ */
+test('the panel dispatches an order for real, and the code it typed is the code that was stored', async ({ page }) => {
+  await signIn(page, '/admin/orders')
+  await orderRow(page, ORDERS.paid.number).getByRole('link').click()
+  // The selection is the URL (spec:195), and the id in it is Mongo's — the panel has never seen it
+  // written down anywhere, which is why this test clicks the row rather than building the address.
+  await expect(page).toHaveURL(/\/admin\/orders\?order=[0-9a-f]{24}$/)
+
+  // Named by the customer, which is the pane's `<h2>`. Every seeded order has its own buyer, so
+  // this cannot resolve to the order next to it.
+  const detail = page.getByRole('region', { name: ORDERS.paid.buyer })
+  await expect(detail).toBeVisible()
+  // The number and the DAY the order was placed, which is the row's own date column. Mongoose
+  // overwrites a `createdAt` handed to it in an update, so without `timestamps: false` in the boot
+  // every seeded order carries the moment of the seed — four rows, one date, and the fixture rule
+  // that no two of them coincide quietly gone.
+  await expect(detail.getByText('#MHP-1002 · 03 set 2026', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('region', { name: 'Envio' }).locator('p').last()).toHaveText(
+    'Correios SEDEX · 3 a 5 dias úteis',
+  )
+  await expect(
+    detail.getByText('Em produção', { exact: true }),
+    'the paid fixture is not paid any more. This test ships it and there is no way back, so a dev-e2e server left running from an earlier run keeps the dispatch — restart it.',
+  ).toBeVisible()
+
+  await detail.getByRole('button', { name: 'Marcar como despachado' }).click()
+  // PADDED ON BOTH SIDES. `useMarkShipped` trims before it sends and `patchSchema` trims again, and
+  // an untrimmed code stored here would still read correctly in the browser — `toHaveText`
+  // normalises whitespace — which is why the assertion after the reload compares `textContent`.
+  await page.getByLabel('Código de rastreio (opcional)').fill('  BR9911777SC  ')
+
+  const patched = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/admin/orders/'))
+  await page.getByRole('button', { name: 'Confirmar' }).click()
+  expect(
+    (await patched).status(),
+    'PATCH /api/admin/orders/:id did not answer 200. A 409 is INVALID_TRANSITION: this order is no longer paid.',
+  ).toBe(200)
+
+  await expect(detail.getByText('Enviado', { exact: true })).toBeVisible()
+  // THE LIST, WHICH IS A SECOND REQUEST AND NOT THE MUTATION'S ANSWER. `useMarkShipped` invalidates
+  // the orders key on success; without that the pane would say `Enviado` beside a row still saying
+  // `Em produção`.
+  await expect(orderRow(page, ORDERS.paid.number)).toContainText('Enviado')
+
+  await page.reload()
+  await expect(detail).toBeVisible()
+  const delivery = detail.getByRole('region', { name: 'Envio' }).locator('p').last()
+  // `textContent` and not `toHaveText`: this is the assertion about the padding, and normalised
+  // text cannot tell `rastreio BR9911777SC` from `rastreio   BR9911777SC  `. The estimate this
+  // line carried a moment ago is gone because `deliveryNote` prefers a code to a delivery window —
+  // a window is what an order that has not gone yet is owed.
+  expect(await delivery.textContent()).toBe('Correios SEDEX · rastreio BR9911777SC')
 })
 
 /**
