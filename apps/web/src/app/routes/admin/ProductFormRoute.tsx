@@ -48,6 +48,25 @@ import { useAdmin } from '../../AdminShellContainer'
 const SPEAKABLE = new Set(['VALIDATION', 'SLUG_TAKEN'])
 
 /**
+ * The same rule for the photo POST, which answers with codes the PUT never can: `PHOTO_UNREADABLE`
+ * for a file the API's image conversion could not decode, `PHOTO_TOO_LARGE` for one over the shared
+ * cap, `BAD_UPLOAD` for a multipart the upload middleware refused. Until they existed, every one of
+ * them was a 500 and this screen said "something broke on my side" about a photo the reader could
+ * have fixed by sending another one.
+ *
+ * A SECOND SET RATHER THAN THREE MORE ENTRIES IN THE FIRST. Nothing stops a save from being told a
+ * photo is unreadable except the fact that the PUT does not say it today, and a set that lets each
+ * request speak only its own vocabulary does not depend on that staying true.
+ */
+const PHOTO_SPEAKABLE = new Set(['PHOTO_UNREADABLE', 'PHOTO_TOO_LARGE', 'BAD_UPLOAD'])
+
+/** The code to show for a failed request, collapsing anything the panel has no sentence for. */
+function spoken(failure: unknown, speakable: Set<string>): string {
+  const code = failure instanceof ApiError ? failure.code : 'INTERNAL'
+  return speakable.has(code) ? code : 'INTERNAL'
+}
+
+/**
  * The product form: the branch's most stateful container, and the only one holding a draft of
  * something the API owns.
  *
@@ -220,7 +239,7 @@ export function ProductFormRoute() {
           // The 409 carries no `fieldErrors`, and the identifier is the field it is about. Saying
           // it twice — beside the box and beside the button — is what `VALIDATION` already does.
           if (code === 'SLUG_TAKEN') setErrors({ slug: ['SLUG_TAKEN'] })
-          setSaveError(SPEAKABLE.has(code) ? code : 'INTERNAL')
+          setSaveError(spoken(failure, SPEAKABLE))
         },
       },
     )
@@ -272,9 +291,10 @@ export function ProductFormRoute() {
               // THE ONLY SLOT THIS SCREEN HAS FOR A FAILED UPLOAD, and it is in the action bar
               // rather than beside the photos. `PhotosEditor`'s own message line carries client-side
               // REFUSALS — a file too large or of a type sharp cannot read — and a server failure is
-              // neither; borrowing `too_large` for a 500 would be a sentence that names the wrong
-              // cause. A photo-error prop on that component is the real home and nobody has one.
-              onError: () => setSaveError('INTERNAL'),
+              // neither; borrowing `too_large` for a server answer would be a sentence that names
+              // the wrong cause. A photo-error prop on that component is the real home and nobody
+              // has one, so the reader is told at the bottom of the form.
+              onError: (failure) => setSaveError(spoken(failure, PHOTO_SPEAKABLE)),
             },
           )
         },

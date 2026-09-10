@@ -10,9 +10,45 @@ import { Product, toPublicProduct } from '../../models/product.js'
 import { adminGuard } from '../../middleware/auth.js'
 
 // The limit the PANEL also enforces, from `@shop/shared`. It refuses an oversized file before
-// sending it, which is the only useful message anyone gets: a file that reaches here throws a
-// `MulterError`, which `errorHandler` does not know and answers 500 for.
+// sending it; a file that reaches here throws a `MulterError`, which `errorHandler` now answers
+// 413 `PHOTO_TOO_LARGE` for.
+//
+// NO `fileFilter`, AND THAT IS A DECISION RATHER THAN AN OMISSION. A filter can only judge the
+// content type the CLIENT claims, which is exactly the field that lies in the failure that actually
+// happens: a browser derives it largely from the extension, so a PDF renamed `.jpg` announces
+// itself as `image/jpeg` and passes any filter written here. The bytes are the only witness, so the
+// decode below is the arbiter — one place, and one that cannot be fooled by a rename.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PHOTO_BYTES } })
+
+/**
+ * `toWebp`, with the one failure that is the CALLER'S fault separated from the ones that are mine.
+ *
+ * A 500 says "I broke" about a photo the sender could have fixed, and it is the answer this route
+ * gave to every undecodable file: a renamed PDF, a truncated download, a HEIC an iPhone produced
+ * and somebody renamed. All of them arrive here as a plain `Error` from sharp.
+ *
+ * SHARP OFFERS NOTHING TO BRANCH ON — measured, not assumed: every failure is a bare `Error` with
+ * no `code`, and the obvious discriminator does not work either. Probing with `metadata()` first
+ * looks like it would separate "not an image" from "sharp broke", but a truncated PNG reads its
+ * header successfully and fails later in the pipeline ("vipspng: libpng read error"), so the probe
+ * would answer 500 for a half-downloaded photo, which is one of the three cases this exists for.
+ *
+ * So the classification is made at the boundary instead of from the error: the only variable input
+ * to this conversion is a buffer the client uploaded, and the same pipeline demonstrably converts
+ * other buffers in the same process. The underlying error is logged rather than dropped, because a
+ * genuinely broken sharp would otherwise be invisible — the response says "your file", the log
+ * still says which file and why.
+ */
+async function decode(buffer: Buffer): Promise<Buffer> {
+  try {
+    return await toWebp(buffer)
+  } catch (err) {
+    console.error('photo upload: sharp could not convert the uploaded buffer', err)
+    // 400 rather than 415: the request's own `Content-Type` is `multipart/form-data`, which is
+    // exactly right and is what a 415 would be about. What is wrong is the bytes inside one part.
+    throw new AppError(400, 'PHOTO_UNREADABLE', 'Photo could not be decoded as an image')
+  }
+}
 
 const altSchema = z.object({ altPt: z.string().max(200).optional(), altEn: z.string().max(200).optional() })
 
@@ -83,7 +119,7 @@ adminProductsRouter.post('/api/admin/products/:id/photos', upload.single('photo'
   // precise route param type from the literal path.
   const doc = await findProduct(req.params.id as string)
   const { altPt, altEn } = altSchema.parse(req.body ?? {})
-  const webp = await toWebp(req.file.buffer)
+  const webp = await decode(req.file.buffer)
   const key = `products/${doc._id}/${randomUUID()}.webp`
   await putObject(key, webp)
   const alt = { pt: altPt ?? '', en: altEn ?? '' }
