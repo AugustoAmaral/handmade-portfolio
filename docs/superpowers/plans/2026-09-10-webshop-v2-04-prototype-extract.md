@@ -159,7 +159,8 @@ Every muted value below sits on `#f4f0e6` (or `#efe9db` on hover) and is therefo
 | `opacity:.7` → 6.23:1 | 365 | `typeLabel` | ✔ |
 | `opacity:.75` → 7.39:1 | 398, 401, 404, 407, 413, 424, 427, 430, 436, 439, 442, 463, 466 | all 13 form labels | ✔ — matches `FieldLabel` exactly |
 | `opacity:.85` → 10.26:1 | 552, 571 | address, notes | ✔ |
-| accent on paper → 5.58:1 | 352, 360, 375, 458, 495, 505 | hover, i18n warning, Apagar, ✕ | ✔ |
+| accent on paper → 5.58:1 | 352, 360, 375, 495, 505 | hover, i18n warning, Apagar, the spec row's ✕ | ✔ |
+| accent at an effective `.6` → **2.66:1** | 458 | the photo card's ✕, which sits inside the header's `opacity:.6` | ✘ — ⚠️ **corrected in Task 5**; `opacity:1` on a child cancels nothing |
 
 **Non-text:** `ink/20` = 1.52:1, `ink/25` = 1.70:1, `ink/30` = 1.92:1, `ink/40` = 2.49:1. All below 3:1, all used as dividers or as the Inativo chip's border. Dividers are decorative and exempt. **The Inativo chip's border is not** — it is the shape that makes the chip read as a chip. And because `opacity:.6` sits on the same element, that border composites to an effective 0.24 alpha = **1.67:1**. `StatusPill` already solved this class of problem (`pending: 'border border-ink/40 opacity-70'`, plus a *dashed* border to carry a distinction that opacity could not) — reuse it rather than re-deriving.
 
@@ -609,7 +610,7 @@ font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-t
 | grid | `grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-[clamp(14px,2vw,22px)]` — **auto-fill**, matching `CatalogGrid`, not `auto-fit` |
 | card | `flex flex-col gap-3 border border-ink p-3.5` |
 | card head | `flex items-center justify-between font-mono text-[10px] tracking-[0.16em] uppercase opacity-60` |
-| ✕ | `text-accent text-[13px] opacity-100` — the `opacity:1` deliberately cancels the parent `.6` |
+| ✕ | `text-accent text-[13px] opacity-100` — ⚠️ **WRONG, corrected in Task 5.** A child's `opacity` cannot cancel a parent's: `opacity` composites the subtree as one group, so this ✕ paints at an effective 0.6 and measures **2.66:1**, an AA failure on the control that deletes a photo. The audit row for line 456/458 below scores it as passing at 5.58 for the same reason and is wrong. Put the 65% on the label `<span>` and leave every control in the header at full strength. |
 | slot | `relative aspect-[4/5] w-full bg-paper-2` → `ImageFrame` |
 | alt labels | `FieldLabel` with `gap-[7px]` |
 
@@ -650,7 +651,7 @@ font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.18em;text-t
 
 ⚠️ **The four spec inputs have no labels.** Only placeholders (`Chave`/`Valor`/`Key`/`Value`), and the column headings are `<span>`s with no programmatic relationship. That is an axe `label` violation four times per row — 16 on a four-spec product. `aria-label` per input, keyed off the row index, or visually hidden `<label>`s. This is the single densest a11y gap in the admin.
 
-⚠️ The `w-5` spacer column aligns the ✕ only while the row does not wrap. Below ~530px the two halves wrap and the ✕ lands under them; the design does not address it.
+⚠️ The `w-5` spacer column aligns the ✕ only while the row does not wrap. Below ~530px the two halves wrap and the ✕ lands under them; the design does not address it. **Task 5's answer:** keep the wrap (there are no media queries in this file and adding one would be the first), push the ✕ with `ml-auto` so the wrapped line ends where the unwrapped one does, and widen both the control and the spacer from 20px to **24px** — WCAG 2.2 SC 2.5.8 asks 24×24 of a target with no spacing exception, and nothing in the a11y gate measures target size.
 
 **Transcription — action bar:**
 
