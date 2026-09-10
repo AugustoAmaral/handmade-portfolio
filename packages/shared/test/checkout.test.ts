@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { checkoutRequestSchema, checkoutRules } from '../src/checkout'
+import { checkoutRequestSchema, checkoutRules, fieldErrorsFromIssues } from '../src/checkout'
+import { CART_MAX_DISTINCT, CART_MAX_QTY } from '../src/shipping'
 
 const buyer = { name: 'Marina Bicalho', email: 'marina@example.com' }
 const brAddress = {
@@ -23,10 +24,22 @@ describe('checkoutRequestSchema', () => {
     expect(parsed.shippingAddress!.country).toBe('BR')
     expect(parsed.shippingMethod).toBe('pac')
   })
-  it('rejects qty over 5, more than 5 distinct items and duplicate slugs', () => {
-    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: 6 }] })).toThrow()
-    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((slug) => ({ slug, qty: 1 }))
-    expect(() => checkoutRequestSchema.parse({ ...base, items: six })).toThrow()
+  // Derived from the constants, never from literals. This test was written as `qty: 6` and six
+  // slugs back when both caps were 5, so it silently stopped testing either one the day they
+  // moved apart — and it could not have told them apart even before that, which is the whole
+  // reason they are now different numbers.
+  //
+  // Each cap is asserted from BOTH sides. Without the at-the-cap half, a schema that rejected
+  // every cart would pass all three of the rejection assertions.
+  it('rejects a qty above the per-item cap and a cart above the distinct-item cap, and accepts both at the cap', () => {
+    const items = (count: number, qty = 1) => Array.from({ length: count }, (_, i) => ({ slug: `s${i}`, qty }))
+
+    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: CART_MAX_QTY + 1 }] })).toThrow()
+    expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'letter', qty: CART_MAX_QTY }] })).not.toThrow()
+
+    expect(() => checkoutRequestSchema.parse({ ...base, items: items(CART_MAX_DISTINCT + 1) })).toThrow()
+    expect(() => checkoutRequestSchema.parse({ ...base, items: items(CART_MAX_DISTINCT) })).not.toThrow()
+
     expect(() => checkoutRequestSchema.parse({ ...base, items: [{ slug: 'a', qty: 1 }, { slug: 'a', qty: 2 }] })).toThrow()
   })
   it('rejects a bad e-mail, a one-letter name, an unknown method and oversized notes', () => {
@@ -78,5 +91,46 @@ describe('checkoutRules', () => {
   it('rejects a country we do not ship to', () => {
     const errors = checkoutRules({ shippingAddress: { ...usAddress, country: 'KP' }, shippingMethod: 'intl' }, true)
     expect(errors).toEqual({ 'shippingAddress.country': ['not_allowed'], shippingMethod: ['not_available'] })
+  })
+})
+
+describe('fieldErrorsFromIssues', () => {
+  it('keys an issue by its dotted path', () => {
+    expect(fieldErrorsFromIssues([{ path: ['buyer', 'email'], message: 'invalid_email' }])).toEqual({
+      'buyer.email': ['invalid_email'],
+    })
+  })
+
+  it('keys a path-less issue under _', () => {
+    // The whole-object refinements — `duplicate_items` on `items` is keyed, but a refinement on the
+    // request itself arrives with an empty path and has nowhere else to go.
+    expect(fieldErrorsFromIssues([{ path: [], message: 'duplicate_items' }])).toEqual({ _: ['duplicate_items'] })
+  })
+
+  it('collects several issues on one field instead of keeping the last', () => {
+    expect(
+      fieldErrorsFromIssues([
+        { path: ['buyer', 'name'], message: 'too_small' },
+        { path: ['buyer', 'name'], message: 'not_a_name' },
+      ]),
+    ).toEqual({ 'buyer.name': ['too_small', 'not_a_name'] })
+  })
+
+  it('joins a numeric index into the path rather than dropping it', () => {
+    // `items[1].qty` is a real rejection shape, and a key of `items.qty` would put the second
+    // line's error on the first line's field.
+    expect(fieldErrorsFromIssues([{ path: ['items', 1, 'qty'], message: 'too_big' }])).toEqual({
+      'items.1.qty': ['too_big'],
+    })
+  })
+
+  it('produces exactly what a real ZodError carries, for the request the checkout actually sends', () => {
+    // The point of the helper: it is fed real zod issues, not the literals above. An empty request
+    // fails several fields at once, which is also what makes it a fair test of the grouping.
+    const parsed = checkoutRequestSchema.safeParse({ items: [], locale: 'pt', buyer: { name: '', email: '' } })
+    if (parsed.success) throw new Error('an empty checkout must fail the schema')
+    const errors = fieldErrorsFromIssues(parsed.error.issues)
+    expect(Object.keys(errors).sort()).toEqual(['buyer.email', 'buyer.name', 'items'])
+    expect(errors['buyer.email']).toHaveLength(1)
   })
 })

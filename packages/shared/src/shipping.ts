@@ -1,5 +1,5 @@
-export const CART_MAX_DISTINCT = 5
-export const CART_MAX_QTY = 5
+export const CART_MAX_DISTINCT = 10
+export const CART_MAX_QTY = 8
 
 // Curated list — Correios reaches 200+ countries, this is where Augusto is willing to ship.
 export const INTL_ALLOWED_COUNTRIES = [
@@ -49,8 +49,3 @@ export function shippingOptionsFor(country: string): ShippingMethodInfo[] {
   if (isAllowedCountry(country)) return [SHIPPING_METHODS.intl]
   return []
 }
-
-/** @deprecated v1 flat rates, still imported by the v1 web app. Removed in PR 2 together with that app. */
-export const SHIPPING_BR_CENTS = 1500
-/** @deprecated see SHIPPING_BR_CENTS */
-export const SHIPPING_INTL_CENTS = 6000

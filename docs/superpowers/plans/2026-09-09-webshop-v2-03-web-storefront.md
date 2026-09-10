@@ -1,0 +1,2166 @@
+# Webshop v2 — PR 3: Web storefront (`feat/v2-web-storefront`) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the v1 storefront with the approved v2 design — a stateful `app/` layer that owns cart, language, data fetching and navigation, and a pure `ui/` layer of shop components and full pages that render from fixtures alone, so every screen from atom to page is a Storybook story with no network mocks anywhere.
+
+**Architecture:** Everything is built additively first, alongside the still-working v1 app, and the v1 app is deleted in a single late task once its replacement compiles and passes. `src/app/**` is the only place with state, effects, IO and the router; `src/ui/**` stays pure and stateless (the PR 2 architecture test already enforces this, recursively, on every new folder). Pages under `src/ui/pages/` take fully-resolved props and are what stories render; containers under `src/app/routes/` are thin and are what the router renders.
+
+**Tech Stack:** React 18.3, react-router 7, @tanstack/react-query 5, Vite 7, Tailwind 4 (`@theme` tokens from PR 2), Storybook 10.6 with `@storybook/addon-vitest` and `@storybook/addon-a11y`, Vitest 3.2.7 (`unit` jsdom project + `storybook` Chromium project), react-i18next 15 via the dedicated `src/copy/` instance, `@shop/shared` for schemas, shipping, totals and money.
+
+**Spec:** `docs/superpowers/specs/2026-09-07-webshop-v2-design.md` (sections "Scope by screen", "Frontend", "Storybook and testing"). This plan is PR 3 of 5. PR 1 (`feat/v2-api-domain`) and PR 2 (`feat/v2-web-foundation`) are merged into `docs/v2-design`.
+
+**Visual source of truth:** `design-claude-design/My Handmade Portfolio.dc.html`, extracted into `docs/superpowers/plans/2026-09-09-webshop-v2-03-prototype-extract.md` — **read that companion file before Tasks 5–10.** It carries the verbatim pt-BR copy, the token mapping, per-component structure notes, and the list of things the design does NOT provide (no semantics, no error/loading/empty states, no mailto address, no reduced-motion handling) which are therefore designed here rather than transcribed.
+
+One finding from the extraction reshapes those tasks: **the prototype contains zero Tailwind and zero semantic HTML.** It is 100% inline styles with raw hex, and nothing in it is a `<button>`, `<a href>`, `<nav>`, `<header>`, `<main>`, `<form>` or `<label>`. Every class string in the plan and the extract is a derivation to be checked against the inline style it came from, and every accessible name, role and keyboard interaction is new work.
+
+## Global Constraints
+
+- Branch `feat/v2-web-storefront` is created from `docs/v2-design`; its PR targets `docs/v2-design`.
+- **The wipe is narrow and happens once, in Task 12.** Delete exactly `src/main.tsx`, `src/App.tsx`, `src/components/`, `src/i18n/`, `src/lib/`, `src/pages/`, and the six v1 test files (`admin-login.test.tsx`, `api.test.ts`, `cart-page.test.tsx`, `cart.test.tsx`, `i18n.test.ts`, `storefront.test.tsx`, `thanks.test.tsx`). KEEP `src/ui/`, `src/copy/`, `src/fixtures/`, the tokens in `src/index.css`, and `test/{setup,storage,copy,fixtures,routes,ui-boundaries}.ts`. The spec's original "the existing `apps/web/src` is discarded" refers to the v1 APP, not the directory — taken literally it destroys PR 2's output. This is spec:14, already amended.
+- **`src/ui/**` is pure and STATELESS.** `test/ui-boundaries.test.ts` walks it recursively and fails on: any import that is not `react`, `react-dom`, `react-i18next`, `@shop/shared` or a relative path resolving inside `src/ui`; any of `useState`, `useReducer`, `useEffect`, `useLayoutEffect`, `useRef`; any of `window.`, `document.`, `localStorage`, `sessionStorage`, `fetch(`. `*.stories.tsx` files are exempt. This applies to `ui/shop/**` and `ui/pages/**` from the moment they exist — do not plan a component around local state.
+- **Only `app/` changes the language.** `useLang` persists to `localStorage['shop_lang']` and calls `i18n.changeLanguage`. `LangToggle` receives `onToggle`.
+- **UI components take `lang` as a PROP from the container. They must NOT read `i18n.resolvedLanguage`.** ⚠️ Amended after Task 3 measured it: `resolvedLanguage` is **`undefined` whenever the app is in English**. `src/copy/i18n.ts` ships `resources: { pt: … }` only — English keys render themselves — and i18next resolves only to a language that HAS translations. Verified directly: `lng=pt → resolvedLanguage=pt`, `lng=en → resolvedLanguage=undefined`. So `product.name[resolvedLanguage]` is `product.name[undefined]` → `undefined` → an empty name on every English page. `formatPrice` is typed `(cents, locale: 'pt' | 'en')` and `resolvedLanguage` is `string | undefined`, so TypeScript rejects it — and the natural way to silence that (`as 'pt' | 'en'`) is exactly what turns a compile error into a silent runtime blank. Inside `app/`, where the current language is genuinely needed from the instance, use `i18n.language`, which is always the language actually set. The `*Props` interfaces in this plan already take `lang: 'pt' | 'en'`; that was right and this constraint was wrong.
+- **i18n keys ARE the English sentence:** `t('Add to bag')`. Only `pt.json` is maintained; in English the key renders itself. `test/copy.test.ts` scans `t('literal')` call sites in `src/ui` and fails on any key missing from `pt.json`, so **every task that adds a `t()` call also adds its `pt.json` entry in the same commit.** Six keys were planted in PR 2 for this PR and must be used, not re-added: `Add to bag`, `Your bag is empty.`, `Ship to: Brazil`, `{{count}} in stock`, `Made to order`, `Sold out`. `Photo of {{name}}` is NO LONGER dead: Task 6 gave it a designed use as the `Hero` photo's alt fallback when the product data carries none. **Task 12 must keep it.** The alt strategy splits by context and Task 7 must make the same call for the gallery: a photo inside a link whose text already names the piece takes `alt=""` (a named image makes the link announce it twice), while a photo standing alone in its own cell takes `photo.alt[lang]` with that key as the fallback.
+- **Navigation is `<a href>` built from `ui/routes.ts`.** No UI component imports the router. `LinkInterceptor` at the app root upgrades same-origin clicks. Callbacks only where something happens before or instead of navigating (`onAddToCart`, `onInc`, `onSubmit`).
+- **Prices are integer BRL cents** and always formatted through `formatPrice(cents, lang)`. Client-side totals are display-only; the API re-prices from Mongo.
+- Design tokens (already in `index.css`, do not redefine): `--color-paper #f4f0e6`, `--color-paper-2 #efe9db`, `--color-paper-3 #e6dfcd`, `--color-ink #1a1713`, `--color-accent #a63d20`; `--font-display 'Instrument Serif'`, `--font-body Newsreader`, `--font-mono 'IBM Plex Mono'`.
+- **Accessibility is a gate, not a review comment.** `.storybook/preview.tsx` sets `a11y: { test: 'error' }`, so every new story must pass axe. Fix the component; never disable a rule.
+- **Which axe rules can actually fire here — corrected in Task 5, measured against the addon's source, because the original list was wrong:**
+  - `region` **NEVER fires.** `@storybook/addon-a11y` ships `DISABLED_RULES = ["region"]` with the comment *"In component testing, landmarks are not always present and the rule check can cause false positives"*. Do not design markup to satisfy it.
+  - `page-has-heading-one`, `landmark-one-main` and `bypass` **never fire either**: their selector is `html:not(html *)` and the addon runs against `document.body`.
+  - `heading-order` cannot fire on a story with a single heading — axe returns true at index 0. It needs three headings to trigger.
+  - What DOES fire and has already caught real defects: `color-contrast`, `button-name`, `aria-dialog-name`, `listitem`, and `landmark-unique` (only once a second unnamed landmark of the same type exists), and `landmark-no-duplicate-main`, which fires alongside it on a second `<main>` — note this is NOT `landmark-one-main`, which stays dead.
+  - **Known blind spot:** `color-contrast` SKIPS single-character text, treating it as a suspected icon ligature. A one-glyph element passes at any contrast. Task 5 probed this across opacity, font size and `aria-hidden`. Judge such elements on the merits; the gate is not watching.
+- **Contrast floors, measured not eyeballed:** 4.5:1 for normal text, 3:1 for text ≥24px and for focus indicators (WCAG 2.2 SC 2.4.11). PR 2 had to raise three opacities and rewrite the focus ring for exactly this. Muted text below `opacity-65` on paper does not clear AA.
+- **`test/ui-boundaries.test.ts` scans RAW SOURCE, comments included.** A doc comment that merely mentions `useState`, `useEffect`, `useRef`, `window.` or `localStorage` fails the purity test, even when the code does nothing of the kind. Task 5 hit this writing a comment explaining WHY the drawer has no focus trap. (`copy.test.ts` strips comments; this one does not.) Phrase such comments around the constraint rather than the API name.
+- **A non-story export in a `.stories.tsx` is indexed as a story** and rendered with no args. Helpers must go in `excludeStories` or live in another file.
+- **Two assertion traps measured on this branch, both of which produced green tests that meant nothing:**
+  1. **`toHaveTextContent` matches by SUBSTRING.** `toHaveTextContent('/')` is satisfied by `'/about'`. Task 4 found nine guard mutations passing green behind one of these. Use `expect(el.textContent).toBe(...)` when you mean equality.
+  2. **A throw inside a React event handler does not fail a test.** React re-publishes it as an unhandled window error: the test stays green and only the process exit code goes non-zero. So a guard whose absence causes a null-deref is caught by `vitest run` as a whole, but by no assertion — do not count it as proved.
+- **i18next plural suffixes are structurally unavailable here.** `copy.test.ts` asserts that `pt.json` carries no key nothing accounts for, and a `_one`/`_other` suffixed key is only ever reached through its base — no literal `t('…')` call site names it, so the test reddens. Task 6 hit this on `{{count}} peças`, which prints "1 peças" for a one-item catalogue (the prototype has the same bug). The idiom on this branch is **two explicit keys plus a condition** (`1 piece` / `{{count}} pieces`), which is correct for both languages and visible to the scanner. Task 13 must decide whether to teach the test about suffixes or bless this idiom — until then, the repo silently forbids correct pluralisation, which is a landmine for any language with more than two plural forms.
+- **When an implementer names what their task left uncovered, that is an ACTION ITEM, not a footnote.** Task 1 reported, unprompted, that it wrote no test for `queries.ts` and that `useOrder`'s two real decisions were therefore uncovered. That was recorded and not acted on. Ten tasks later Task 11 found the query hooks never unwrapped the API envelopes at all — `/api/products` answers `{ products }`, `/api/products/:slug` answers `{ product }`, `/api/orders/:n` answers `{ order }`, and all three were typed as the bare value. Every container would have read the envelope as its payload. Nothing could have caught it: the only test asked for was a client test, and no consumer existed yet. **A layer with no consumer has no test that means anything — either write the consumer's test with it, or treat the gap as open work.**
+- **Every new assertion must be proved able to fail** by mutating what it guards, and the proof reported. An assertion that cannot fail is deleted, not kept "for coverage". PR 2 shipped ten of them before this standard was enforced.
+- Run vitest with `NODE_OPTIONS=--max-old-space-size=4096`. The machine guardrail lives at the ROOT of `apps/web/vitest.config.ts` (`maxWorkers: 2`, `minWorkers: 1`, `poolOptions.forks.{minForks:1,maxForks:2}`) — **never move it inside a project, where it is silently ignored.** After a run check orphans: `ps ax -o pid,ppid,command | grep -i vitest | grep -v grep`, kill any with ppid 1.
+- Commits in English, conventional-commit noun-phrase subjects, **no trailers** (no `Co-Authored-By`, no `Claude-Session`). The branch below has zero across 47 commits; keep it that way.
+- Code, comments, tests and story names in English. Only `pt.json` values and fixture content are pt-BR.
+
+---
+
+## The two problems the spec does not solve
+
+Both are real, both bite in Task 12, and both are decided here so no implementer has to invent an answer.
+
+**1. The admin dies between PR 3 and PR 4.** Deleting `src/pages/admin/` removes the admin app, and PR 4 is what rebuilds it. `App.tsx` in this PR therefore registers **shop routes only**; `/admin*` is unrouted and renders the not-found branch. This is safe because these PRs merge into `docs/v2-design`, not `main` — production keeps serving v1 until PR 5 lands. `ui/routes.ts` keeps its `admin*` builders; they are strings, and PR 4 consumes them.
+
+**2. The e2e suite breaks the moment the v1 app is gone.** `e2e/shop.spec.ts` drives `/cart` (removed in v2) and the v1 admin login. CI runs e2e on every PR, so this PR cannot leave it red and cannot defer it to PR 5. Task 12 therefore: rewrites test 1 for the v2 flow (catalog → product → add to bag → drawer shows the line and totals), **skips** test 2 with `test.skip(true, 'admin is rebuilt in PR 4')` exactly as test 3 is already skipped for PR 5, and leaves test 3 untouched. Do not delete the skipped tests: a skipped test with a reason is a tracked commitment, a deleted one is forgotten work.
+
+---
+
+## File map
+
+Created under `apps/web/src/app/` (STATEFUL — router, IO, state; not covered by the purity test):
+
+| File | Responsibility |
+|---|---|
+| `api/client.ts` | `ApiError`, `api<T>(path, init)` — base URL, JSON headers, error envelope unwrapping |
+| `api/queries.ts` | react-query hooks: `useProducts`, `useProduct(slug)`, `useOrder(orderNumber, sessionId)`, `useCheckout()` mutation |
+| `state/useCart.ts` | `shop_cart` localStorage, add/setQty/remove/clear, `CART_MAX_*` limits, `count` |
+| `state/useLang.ts` | `shop_lang` localStorage + `navigator.language` fallback, calls `i18n.changeLanguage` |
+| `anchors.ts` | `interceptableAnchor(event)` and `routeTargetOf(anchor)` — the rule for which clicks are ours, shared with `.storybook/preview.tsx` |
+| `LinkInterceptor.tsx` | capture-phase click → `navigate()` for plain same-origin anchors only |
+| `ShopShellContainer.tsx` | cart + drawer state + language, wraps the shop routes via `<Outlet/>` |
+| `routes/HomeRoute.tsx` | catalog query → `HomePage` |
+| `routes/ProductRoute.tsx` | product query + selected photo state → `ProductPage` |
+| `routes/AboutRoute.tsx` | `AboutPage` (no data) |
+| `routes/CheckoutRoute.tsx` | form values/errors, `checkoutRules` validation, POST + `window.location.assign` |
+| `routes/DoneRoute.tsx` | `?order=&session_id=`, polls while `pending`, clears the cart on first hit |
+| `main.tsx` | providers: QueryClient, BrowserRouter, copy i18n, `index.css` |
+| `App.tsx` | `<LinkInterceptor>` + shop `<Routes>` |
+
+Created under `apps/web/src/ui/` (PURE — props in, JSX out; every file gets a `.stories.tsx`):
+
+| Folder | Files |
+|---|---|
+| `shop/` | `ShopHeader`, `CartDrawer`, `CartLine`, `Hero`, `FeaturedCard`, `ProductCard`, `CatalogGrid`, `ClosingBlock`, `ProductGallery`, `SpecsTable`, `AboutBlocks`, `AboutFacts`, `AboutClosing`, `CheckoutBuyerSection`, `CheckoutAddressSection`, `CheckoutShippingSection`, `CheckoutNotesSection`, `CheckoutPaymentSection`, `OrderSummaryPanel`, `index.ts` |
+| `pages/` | `ShopShell`, `HomePage`, `ProductPage`, `AboutPage`, `CheckoutPage`, `DonePage`, `index.ts` |
+
+Modified: `apps/web/src/copy/pt.json` (grows with every task), `e2e/shop.spec.ts` (Task 12), `apps/web/src/index.css` (only if a token is genuinely missing).
+
+Deleted in Task 12: `src/{main,App}.tsx` (v1 versions, replaced), `src/components/`, `src/i18n/`, `src/lib/`, `src/pages/`, and the six v1 test files listed in the constraints.
+
+---
+
+## The fixtures you already have
+
+PR 2 shipped these, typed against the real `@shop/shared` schemas and deep-frozen. Stories render from them; nothing in this PR should hand-build a product, an order or a checkout request.
+
+- `fixtures/products.ts` — `letter` (featured, physical, made-to-order, 2 photos), `drawing`, `soldOutDrawing` (`stock: 0`), `digitalLetter` (`type: 'digital'`), `inactiveGuide` (`active: false`), `productWithoutPhotos`, and `products` (the four active ones, in catalogue order).
+- `fixtures/checkout.ts` — `emptyCheckout`, `brCheckout`, `intlCheckout`, `digitalCheckout`, `incompleteBrCheckout`, plus `brCheckoutErrors` and `buyerCheckoutErrors` (**derived by running the real `checkoutRules` and the real zod schema**, not hand-written, so the error stories cannot drift from what the API actually emits), and `cartLines` for totals.
+- `fixtures/orders.ts` — `pendingOrder`, `paidOrder`, `shippedOrder`, `oversoldOrder`, `expiredOrder`, `adminOrders` (admin shapes, mostly PR 4), and `publicPendingOrder` / `publicPaidOrder` — the two `DonePage` stories need exactly these.
+
+**Known fixture ceilings, measured in Task 7 — do not write a story that needs more than these without extending the fixtures first:** the richest product (`letter`) has **two photos**, not three, and **three specs**, not four. This plan asked for a three-photo gallery story and a four-spec table story; neither is expressible as shipped. Vary a fixture by spreading it in the story file (which `freeze.ts` and `fixtures.test.ts` both document as the supported way) rather than adding a `products.ts` export, since a new export silently escapes `fixtures.test.ts`'s hand-maintained `allProducts` list.
+
+If a story needs a state none of these cover, add a fixture rather than an inline literal: `test/fixtures.test.ts` validates every export against the schemas, so a fixture is checked and a literal is not.
+
+
+## Task order and why
+
+Tasks 1–11 are **purely additive**: the v1 app keeps compiling, its tests keep passing, and `npm run build` keeps working throughout. Nothing collides, because the only two files the v1 app and the v2 app both want are `main.tsx` and `App.tsx`, and those are written in Task 12. This is the same strategy PR 2 used, and it is what makes every intermediate commit shippable.
+
+| # | Task | Depends on |
+|---|---|---|
+| 1 | API client and query hooks | — |
+| 2 | `useCart` | — |
+| 3 | `useLang` | — |
+| 4 | `LinkInterceptor` | — |
+| 5 | Shop chrome: `ShopHeader`, `CartLine`, `CartDrawer` | — |
+| 6 | Home components | — |
+| 7 | Product components | — |
+| 8 | About components | — |
+| 9 | Checkout sections and summary | — |
+| 10 | Pages | 5–9 |
+| 11 | Containers | 1–4, 10 |
+| 12 | The switch: new `main`/`App`, wipe v1, fix e2e | 11 |
+| 13 | Autodocs decision and the branch-wide sweep | 12 |
+
+---
+
+### Task 1: API client and query hooks
+
+The v1 client is deleted in Task 12, so this is a rewrite, not a move. Two differences from v1 that matter: the admin token header stays (PR 4 needs it, and leaving it out would make PR 4 edit this file again), and the checkout mutation is the one call whose error envelope carries `fieldErrors` the checkout form renders field by field.
+
+**Files:**
+- Create: `apps/web/src/app/api/client.ts`
+- Create: `apps/web/src/app/api/queries.ts`
+- Test: `apps/web/test/app/api-client.test.ts`
+
+**Interfaces:**
+- Consumes: `PublicProduct`, `PublicOrder`, `CheckoutRequest` from `@shop/shared`.
+- Produces:
+  - `class ApiError extends Error { status: number; code: string; fieldErrors?: FieldErrors }`
+  - `api<T>(path: string, init?: RequestInit): Promise<T>`
+  - `useProducts(): UseQueryResult<PublicProduct[]>`
+  - `useProduct(slug: string): UseQueryResult<PublicProduct>`
+  - `useOrder(orderNumber: number | null, sessionId: string | null): UseQueryResult<PublicOrder>`
+  - `useCheckout(): UseMutationResult<{ url: string; orderNumber: number }, ApiError, CheckoutRequest>`
+
+> **Tests for `src/app` go in `apps/web/test/app/`, never colocated.** The `unit` vitest project includes `test/**/*.test.{ts,tsx}` only, and the `storybook` project collects `*.stories.tsx`. A test written next to the source it covers is collected by NEITHER project: it typechecks, it is never run, and nothing says so.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// apps/web/test/app/api-client.test.ts
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError, api, retryQuery } from '../../src/app/api/client'
+
+function respond(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+}
+
+// Typed to the shape `fetch` is actually called with. `vi.fn(async () => ...)` infers a
+// zero-argument mock, and `mock.calls[0]![1]` on it is a type error rather than the init object
+// every assertion below reads.
+function fetchStub(respondWith: () => Response) {
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => respondWith())
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  localStorage.clear()
+})
+
+describe('api', () => {
+  it('returns the parsed body on success', async () => {
+    vi.stubGlobal('fetch', fetchStub(() => respond(200, { ok: true })))
+    await expect(api<{ ok: boolean }>('/api/health')).resolves.toEqual({ ok: true })
+  })
+
+  it('sends the admin token when one is stored, and none when it is not', async () => {
+    const fetchMock = fetchStub(() => respond(200, {}))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api('/api/products')
+    const anonymous = new Headers(fetchMock.mock.calls[0]![1]!.headers)
+    expect(anonymous.get('authorization')).toBeNull()
+
+    localStorage.setItem('shop_admin_token', 'tok')
+    await api('/api/products')
+    const authed = new Headers(fetchMock.mock.calls[1]![1]!.headers)
+    expect(authed.get('authorization')).toBe('Bearer tok')
+  })
+
+  it('does not set a JSON content-type on FormData, so the boundary survives', async () => {
+    const fetchMock = fetchStub(() => respond(200, {}))
+    vi.stubGlobal('fetch', fetchMock)
+    await api('/api/admin/products/1/photos', { method: 'POST', body: new FormData() })
+    const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers)
+    expect(headers.get('content-type')).toBeNull()
+  })
+
+  it('throws ApiError carrying the envelope code and fieldErrors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(() =>
+        respond(400, { error: { code: 'VALIDATION', message: 'bad', fieldErrors: { 'buyer.email': ['invalid'] } } }),
+      ),
+    )
+    const error = await api('/api/checkout', { method: 'POST' }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 400, code: 'VALIDATION', fieldErrors: { 'buyer.email': ['invalid'] } })
+  })
+
+  it('still throws ApiError when the error body is not JSON', async () => {
+    vi.stubGlobal('fetch', fetchStub(() => new Response('<html>502</html>', { status: 502 })))
+    const error = await api('/api/checkout').catch((e: unknown) => e)
+    // A gateway returning HTML is the shape that breaks a client which assumes `res.json()` works.
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 502, code: 'UNKNOWN' })
+  })
+})
+
+describe('retryQuery', () => {
+  it('never repeats a 4xx, however early the failure', () => {
+    // The answer is the same every time, and the wait is paid by a reader staring at the loading
+    // screen. `failureCount` 0 is the FIRST failure: a guard that only fired later would still
+    // spend a backoff on a slug that does not exist.
+    expect(retryQuery(0, new ApiError(404, 'PRODUCT_NOT_FOUND', 'gone'))).toBe(false)
+    expect(retryQuery(0, new ApiError(400, 'VALIDATION', 'bad'))).toBe(false)
+  })
+
+  it('repeats a 5xx up to three times and then stops', () => {
+    // Both ends, because they are separate guards: without the first, a shop that is briefly down
+    // never recovers on its own; without the second, a shop that stays down is asked forever.
+    const error = new ApiError(503, 'UNAVAILABLE', 'down')
+    expect(retryQuery(0, error)).toBe(true)
+    expect(retryQuery(2, error)).toBe(true)
+    expect(retryQuery(3, error)).toBe(false)
+  })
+
+  it('repeats a failure that never became an ApiError at all', () => {
+    // A dropped connection rejects inside `fetch`, before there is a status to read, so it arrives
+    // here as a TypeError. Treating an unrecognised failure as final is how a flaky network turns
+    // into a permanent error screen.
+    expect(retryQuery(0, new TypeError('Failed to fetch'))).toBe(true)
+  })
+})
+```
+
+> **Amended after Task 1 shipped.** The block above is regenerated from `apps/web/test/app/api-client.test.ts` as built. The original draft wrote `vi.fn(async () => respond(...))` and then read `fetchMock.mock.calls[0]![1]!.headers` — which does not typecheck: `vi.fn` infers a zero-argument mock, so `mock.calls` is `[][]` and index `[1]` is out of range under the repo's `strict: true`. Three of the five tests depend on that read, so the file would have failed `tsc` as written. The `fetchStub` helper types the mock to the shape `fetch` is really called with. **Tasks 2-13: any mock whose arguments you later inspect must declare its parameters.**
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `cd apps/web && NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --project unit test/app/api-client.test.ts`
+Expected: FAIL — `Failed to resolve import "../../src/app/api/client"`.
+
+- [ ] **Step 3: Write the client**
+
+```ts
+// apps/web/src/app/api/client.ts
+import type { FieldErrors } from '@shop/shared'
+
+const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public fieldErrors?: FieldErrors,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+interface ErrorEnvelope {
+  error?: { code?: string; message?: string; fieldErrors?: FieldErrors }
+}
+
+/** react-query's default, and the ceiling this predicate keeps for the failures worth repeating. */
+const MAX_ATTEMPTS = 3
+
+/**
+ * Whether a failed query is worth asking again, wired as the QueryClient's default in `main.tsx`.
+ *
+ * A 4XX IS THE SERVER'S FINAL ANSWER. react-query retries three times by default with an
+ * exponential backoff, so without this a mistyped `/exhibit/:slug` spends about seven seconds on
+ * the loading screen re-asking for a piece the API has already said three times does not exist,
+ * and only then shows the not-found screen. Nothing is fixed by the wait — the answer is identical
+ * every time — and the reader pays all of it.
+ *
+ * Anything else IS worth repeating: a 5xx and a dropped connection (which never becomes an
+ * `ApiError` at all, because `fetch` rejects before there is a status to read) are both states that
+ * can be over by the next attempt.
+ */
+export function retryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < MAX_ATTEMPTS
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = localStorage.getItem('shop_admin_token')
+  const headers = new Headers(init.headers)
+  // FormData must set its own content-type: it carries the multipart boundary, and overwriting
+  // it with application/json makes the server parse an empty body.
+  if (!(init.body instanceof FormData)) headers.set('content-type', 'application/json')
+  if (token) headers.set('authorization', `Bearer ${token}`)
+
+  const res = await fetch(`${BASE}${path}`, { ...init, headers })
+  // A 502 from a proxy is HTML, not JSON. Swallowing the parse failure is what keeps the thrown
+  // value an ApiError the callers can branch on instead of a SyntaxError from deep in the client.
+  const data = (await res.json().catch(() => ({}))) as ErrorEnvelope
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      data.error?.code ?? 'UNKNOWN',
+      data.error?.message ?? 'Request failed',
+      data.error?.fieldErrors,
+    )
+  }
+  return data as T
+}
+```
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Run: same command.
+Expected: PASS, 7 tests / 13 assertions.
+
+- [ ] **Step 5: Prove the assertions can fail**
+
+Mutate, run, restore, and report each result:
+1. Drop the `FormData` guard (always set the JSON content-type) → the FormData test must go red.
+2. Remove `.catch(() => ({}))` → the non-JSON test must go red (it will throw `SyntaxError`, not `ApiError`).
+3. Return `data.error?.code ?? 'UNKNOWN'` as a literal `'UNKNOWN'` → the envelope test must go red.
+
+If any mutation leaves the suite green, the assertion is inert: fix it or delete it.
+
+- [ ] **Step 6: Write the query hooks**
+
+```ts
+// apps/web/src/app/api/queries.ts
+import type { CheckoutRequest, PublicOrder, PublicProduct } from '@shop/shared'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { type ApiError, api } from './client'
+
+// EVERY public GET ANSWERS IN AN ENVELOPE, and these hooks are where it comes off. `products.ts`
+// replies `{ products }`, `{ product }` and `orders.ts` replies `{ order }` — one named key, never
+// the bare value. Unwrapping here rather than in each container keeps the shape in one place, and
+// it is the same split `client.ts` already makes for the error envelope.
+export function useProducts() {
+  return useQuery({
+    queryKey: ['products'],
+    queryFn: async () => (await api<{ products: PublicProduct[] }>('/api/products')).products,
+  })
+}
+
+export function useProduct(slug: string) {
+  return useQuery({
+    queryKey: ['product', slug],
+    queryFn: async () =>
+      (await api<{ product: PublicProduct }>(`/api/products/${encodeURIComponent(slug)}`)).product,
+  })
+}
+
+// The thank-you page lands the instant Stripe redirects, which is before the webhook has
+// necessarily been delivered. Poll while the order is still `pending` and stop once it settles;
+// `enabled` keeps the query idle until both halves of the credential are present.
+//
+// `poll` is the container's stop switch and it cannot be expressed any other way: spec:202 caps the
+// wait at about thirty seconds, and the query key is built from the credential, so a container that
+// tried to stop by passing `null` would change the key and throw away the order it had already
+// loaded. It defaults to true, so the polling contract is unchanged for anything that ignores it.
+const DONE_POLL_MS = 2000
+
+export function useOrder(orderNumber: number | null, sessionId: string | null, poll = true) {
+  return useQuery({
+    queryKey: ['order', orderNumber, sessionId],
+    queryFn: async () =>
+      (await api<{ order: PublicOrder }>(`/api/orders/${orderNumber}?session_id=${encodeURIComponent(sessionId!)}`))
+        .order,
+    enabled: orderNumber != null && sessionId != null,
+    refetchInterval: (query) => (poll && query.state.data?.status === 'pending' ? DONE_POLL_MS : false),
+    retry: false,
+  })
+}
+
+export function useCheckout() {
+  return useMutation<{ url: string; orderNumber: number }, ApiError, CheckoutRequest>({
+    mutationFn: (body) => api('/api/checkout', { method: 'POST', body: JSON.stringify(body) }),
+  })
+}
+```
+
+- [ ] **Step 7: Typecheck and commit**
+
+Run: `cd apps/web && npx tsc -p tsconfig.json --noEmit`
+
+```bash
+git add apps/web/src/app/api apps/web/test/app/api-client.test.ts
+git commit -m "feat(web): add the v2 api client and query hooks"
+```
+
+---
+
+### Task 2: `useCart`
+
+**Files:**
+- Create: `apps/web/src/app/state/useCart.ts`
+- Test: `apps/web/test/app/use-cart.test.ts`
+
+**Interfaces:**
+- Produces: `useCart(): { items: CartItem[]; count: number; add(slug): void; setQty(slug, qty): void; remove(slug): void; clear(): void }` where `CartItem` is `@shop/shared`'s `{ slug: string; qty: number }`.
+
+The v1 shipped this as a Context provider. It is a plain hook here, called once in `ShopShellContainer`, which passes the pieces down as props — the same reason `ui/` is stateless applies one level up: a single owner is easier to reason about than an ambient one, and the pages take props either way.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// apps/web/test/app/use-cart.test.ts
+import { CART_MAX_DISTINCT, CART_MAX_QTY } from '@shop/shared'
+import { act, renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { useCart } from '../../src/app/state/useCart'
+
+beforeEach(() => localStorage.clear())
+
+describe('useCart', () => {
+  it('adds a line and counts units, not lines', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.add('a'))
+    act(() => result.current.add('b'))
+    expect(result.current.items).toEqual([
+      { slug: 'a', qty: 2 },
+      { slug: 'b', qty: 1 },
+    ])
+    expect(result.current.count).toBe(3)
+  })
+
+  it('caps a line at CART_MAX_QTY and the cart at CART_MAX_DISTINCT', () => {
+    const { result } = renderHook(() => useCart())
+    for (let i = 0; i < CART_MAX_QTY + 3; i++) act(() => result.current.add('a'))
+    expect(result.current.items[0]!.qty).toBe(CART_MAX_QTY)
+
+    for (let i = 0; i < CART_MAX_DISTINCT + 2; i++) act(() => result.current.add(`slug-${i}`))
+    expect(result.current.items.length).toBe(CART_MAX_DISTINCT)
+  })
+
+  it('removes the line when the quantity reaches zero', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.setQty('a', 0))
+    expect(result.current.items).toEqual([])
+  })
+
+  it('sets a quantity directly and clamps it to CART_MAX_QTY', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.setQty('a', 3))
+    expect(result.current.items).toEqual([{ slug: 'a', qty: 3 }])
+
+    // `add` is not the only way past the cap. The drawer's stepper is the only caller today, but
+    // it passes a number, and a cart the checkout schema rejects is a checkout that 400s.
+    act(() => result.current.setQty('a', CART_MAX_QTY + 4))
+    expect(result.current.items[0]!.qty).toBe(CART_MAX_QTY)
+  })
+
+  it('removes only the named line', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.add('b'))
+    act(() => result.current.remove('a'))
+    expect(result.current.items).toEqual([{ slug: 'b', qty: 1 }])
+  })
+
+  it('persists to localStorage and reloads from it', () => {
+    const first = renderHook(() => useCart())
+    act(() => first.result.current.add('a'))
+    expect(JSON.parse(localStorage.getItem('shop_cart')!)).toEqual([{ slug: 'a', qty: 1 }])
+
+    const second = renderHook(() => useCart())
+    expect(second.result.current.items).toEqual([{ slug: 'a', qty: 1 }])
+  })
+
+  it('starts empty when the stored value is corrupt rather than throwing', () => {
+    localStorage.setItem('shop_cart', '{not json')
+    const { result } = renderHook(() => useCart())
+    expect(result.current.items).toEqual([])
+  })
+
+  it('starts empty when the stored value is valid JSON of the wrong shape', () => {
+    // The v1 guarded the parse but not the result: `JSON.parse('"x"')` succeeds and hands the
+    // cart a string, and every consumer then reads `.slug` off characters.
+    localStorage.setItem('shop_cart', '{"slug":"a"}')
+    const { result } = renderHook(() => useCart())
+    expect(result.current.items).toEqual([])
+  })
+
+  it('drops the stored entries that are not cart items and keeps the ones that are', () => {
+    // The array check above is not the same guard as the item check here, and only this shape
+    // separates them: it IS an array, so `Array.isArray` passes it and every malformed ELEMENT
+    // reaches a consumer that reads `line.qty`. Note an over-cap qty is dropped, not clamped —
+    // a stored line the checkout schema would reject is treated as corrupt, not as a big order.
+    localStorage.setItem(
+      'shop_cart',
+      JSON.stringify([{ slug: 'a', qty: 2 }, { nope: 1 }, 'x', null, { slug: 'c', qty: CART_MAX_QTY + 1 }]),
+    )
+    const { result } = renderHook(() => useCart())
+    expect(result.current.items).toEqual([{ slug: 'a', qty: 2 }])
+  })
+
+  it('clears', () => {
+    const { result } = renderHook(() => useCart())
+    act(() => result.current.add('a'))
+    act(() => result.current.clear())
+    expect(result.current.items).toEqual([])
+    expect(JSON.parse(localStorage.getItem('shop_cart')!)).toEqual([])
+  })
+})
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `cd apps/web && NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --project unit test/app/use-cart.test.ts`
+Expected: FAIL — module not found.
+
+- [ ] **Step 3: Implement**
+
+```ts
+// apps/web/src/app/state/useCart.ts
+import { CART_MAX_DISTINCT, CART_MAX_QTY, type CartItem, cartItemSchema } from '@shop/shared'
+import { useCallback, useEffect, useState } from 'react'
+
+const STORAGE_KEY = 'shop_cart'
+
+// Validated on read, not just parsed. The stored value is user-editable and survives deploys, so
+// a shape from an older version — or a hand-edited one — must degrade to an empty cart rather
+// than reach the UI as a half-formed line. Both guards are load-bearing and neither implies the
+// other: `Array.isArray` rejects a stored object, the per-item schema rejects a bad element
+// inside a real array. An item the checkout schema would reject (over-cap qty) is dropped rather
+// than clamped — a cart that cannot be ordered is corrupt, not large.
+function load(): CartItem[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((item) => {
+      const result = cartItemSchema.safeParse(item)
+      return result.success ? [result.data] : []
+    })
+  } catch {
+    return []
+  }
+}
+
+export interface CartApi {
+  items: CartItem[]
+  count: number
+  add(slug: string): void
+  setQty(slug: string, qty: number): void
+  remove(slug: string): void
+  clear(): void
+}
+
+export function useCart(): CartApi {
+  const [items, setItems] = useState<CartItem[]>(load)
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+  }, [items])
+
+  const add = useCallback((slug: string) => {
+    setItems((prev) => {
+      const line = prev.find((i) => i.slug === slug)
+      if (line) return prev.map((i) => (i.slug === slug ? { ...i, qty: Math.min(i.qty + 1, CART_MAX_QTY) } : i))
+      if (prev.length >= CART_MAX_DISTINCT) return prev
+      return [...prev, { slug, qty: 1 }]
+    })
+  }, [])
+
+  const setQty = useCallback((slug: string, qty: number) => {
+    setItems((prev) =>
+      qty <= 0
+        ? prev.filter((i) => i.slug !== slug)
+        : prev.map((i) => (i.slug === slug ? { ...i, qty: Math.min(qty, CART_MAX_QTY) } : i)),
+    )
+  }, [])
+
+  const remove = useCallback((slug: string) => setItems((prev) => prev.filter((i) => i.slug !== slug)), [])
+  const clear = useCallback(() => setItems([]), [])
+
+  return { items, count: items.reduce((n, i) => n + i.qty, 0), add, setQty, remove, clear }
+}
+```
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Expected: PASS, 10 tests / 15 assertions.
+
+> **Amended after Task 2 shipped.** Both blocks are regenerated from the files as built, and the test count went from 7 to 10. Three changes, all found by the implementer:
+>
+> 1. **The draft's wrong-shape test did not prove what it claimed.** `localStorage.setItem('shop_cart', '{"slug":"a"}')` is rejected by `Array.isArray`, never reaching the per-item `safeParse` — so removing the schema validation alone left it green. The draft's own parenthetical predicted this and it happened anyway. The fix is a test with a REAL array full of junk (`{nope:1}`, `'x'`, `null`, an over-cap qty), which is the only input that distinguishes the two guards. **Generalise this: a mutation that removes two guards at once cannot tell you either one is load-bearing.**
+> 2. `remove()` was never called by any test, and only `add`'s cap was exercised, not `setQty`'s. Both were shipping uncovered.
+> 3. `load()` uses `flatMap` rather than `map/filter/map`. The draft's form does compile under TS 5.9's inferred type predicates, but it depends on that inference for its type safety: if it ever fails, `r.data` degrades to `CartItem | undefined` silently and the array gets holes. `flatMap` does not rely on it.
+>
+> **Decision recorded, not a bug:** an item whose stored qty exceeds `CART_MAX_QTY` is DROPPED, not clamped, because that is what `cartItemSchema` does and a cart the checkout would reject is corrupt rather than large. Clamping is one line if this ever bites.
+
+- [ ] **Step 5: Prove the assertions can fail**
+
+1. Replace the `safeParse` filter with a bare cast → the wrong-shape test must go red. (If it does not, the assertion is checking the parse rather than the validation.)
+2. Remove the `Math.min(..., CART_MAX_QTY)` → the cap test must go red.
+3. Remove the `prev.length >= CART_MAX_DISTINCT` guard → the distinct cap test must go red.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/src/app/state/useCart.ts apps/web/test/app/use-cart.test.ts
+git commit -m "feat(web): add the cart hook with validated persistence"
+```
+
+---
+
+### Task 3: `useLang`
+
+**Files:**
+- Create: `apps/web/src/app/state/useLang.ts`
+- Test: `apps/web/test/app/use-lang.test.ts`
+
+**Interfaces:**
+- Produces: `useLang(): { lang: 'pt' | 'en'; toggle(): void }`.
+
+This is the ONLY place the language changes. It reads `localStorage['shop_lang']`, falls back to `navigator.language`, defaults to `pt`, and calls `i18n.changeLanguage` on the `src/copy/` instance.
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// apps/web/test/app/use-lang.test.tsx
+import { act, renderHook } from '@testing-library/react'
+import { type ReactNode } from 'react'
+import { I18nextProvider } from 'react-i18next'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useLang } from '../../src/app/state/useLang'
+import { copyI18n, createCopyInstance } from '../../src/copy/i18n'
+
+// `copyI18n` is deliberately not react-i18next's global default, so a bare `useTranslation()`
+// only reaches it through a provider. Without this wrapper the hook gets react-i18next's fallback
+// object, whose `changeLanguage` is undefined.
+const wrapper = ({ children }: { children: ReactNode }) => <I18nextProvider i18n={copyI18n}>{children}</I18nextProvider>
+
+// jsdom reports `navigator.language` as 'en-US', so a test that leaves it alone starts the hook in
+// English and every toggle assertion reads backwards. Each test states the browser it assumes.
+function browserLanguage(value: string) {
+  vi.spyOn(navigator, 'language', 'get').mockReturnValue(value)
+}
+
+beforeEach(async () => {
+  localStorage.clear()
+  // The instance is a module singleton shared by every test in this file: without the reset a test
+  // inherits whatever language the previous one left behind.
+  await copyI18n.changeLanguage('pt')
+})
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('useLang', () => {
+  it('defaults to pt when nothing is stored and the browser says pt-BR', () => {
+    browserLanguage('pt-BR')
+    const { result } = renderHook(() => useLang(), { wrapper })
+    expect(result.current.lang).toBe('pt')
+  })
+
+  it('uses en when the browser is English and nothing is stored', () => {
+    browserLanguage('en-GB')
+    const { result } = renderHook(() => useLang(), { wrapper })
+    expect(result.current.lang).toBe('en')
+  })
+
+  it('prefers the stored language over the browser', () => {
+    browserLanguage('en-GB')
+    localStorage.setItem('shop_lang', 'pt')
+    const { result } = renderHook(() => useLang(), { wrapper })
+    expect(result.current.lang).toBe('pt')
+  })
+
+  it('ignores a stored value that is not a supported language', () => {
+    // The browser says English on purpose. With 'pt-BR' here the expected value would be the one
+    // the fallback produces anyway, and the test could not tell a rejected 'klingon' from an
+    // `initialLang` that never reads storage at all — that case is the test above, and the two
+    // guards have to be separable or neither is proved.
+    browserLanguage('en-GB')
+    localStorage.setItem('shop_lang', 'klingon')
+    const { result } = renderHook(() => useLang(), { wrapper })
+    expect(result.current.lang).toBe('en')
+  })
+
+  it('writes nothing on mount, so a visitor who never chooses keeps following the browser', () => {
+    // The stored value means "the user chose this", never "the browser said this once". Writing a
+    // sniffed language on mount would freeze the first visit's browser setting forever, and a
+    // visitor who later switches their browser to Portuguese would keep getting English.
+    browserLanguage('en-GB')
+    renderHook(() => useLang(), { wrapper })
+    expect(localStorage.getItem('shop_lang')).toBeNull()
+  })
+
+  it('toggles, persists, and actually changes the i18n instance', async () => {
+    browserLanguage('pt-BR')
+    const { result } = renderHook(() => useLang(), { wrapper })
+
+    await act(async () => result.current.toggle())
+
+    expect(result.current.lang).toBe('en')
+    expect(localStorage.getItem('shop_lang')).toBe('en')
+    // The two that matter: without the `changeLanguage` call the toggle flips a label and
+    // translates nothing. They are not the same claim — an instance switched to a language it
+    // does not ship renders English copy by falling back to the key, which passes the first and
+    // fails the second — and the copy one comes first so that a mutation reddens it rather than
+    // stopping the test one line earlier. `language`, not `resolvedLanguage`: see the hook.
+    expect(copyI18n.t('Add to bag')).toBe('Add to bag')
+    expect(copyI18n.language).toBe('en')
+  })
+
+  it('toggles back, so it is a flip and not a set', async () => {
+    browserLanguage('pt-BR')
+    const { result } = renderHook(() => useLang(), { wrapper })
+
+    await act(async () => result.current.toggle())
+    await act(async () => result.current.toggle())
+
+    expect(result.current.lang).toBe('pt')
+    expect(localStorage.getItem('shop_lang')).toBe('pt')
+    // A one-way sync is a real failure shape: the user switches back and keeps reading English.
+    expect(copyI18n.t('Add to bag')).toBe('Colocar na sacola')
+  })
+
+  it('drives the provided instance, not the imported singleton', async () => {
+    browserLanguage('pt-BR')
+    // Asserting on the same singleton the wrapper provides cannot distinguish a context read from
+    // a hard-coded `import { copyI18n }`; a second instance can. Storybook already provides one
+    // instance per locale, so this is the shape the hook will actually meet.
+    const provided = createCopyInstance('pt')
+    void provided.init()
+    const { result } = renderHook(() => useLang(), {
+      wrapper: ({ children }: { children: ReactNode }) => <I18nextProvider i18n={provided}>{children}</I18nextProvider>,
+    })
+
+    await act(async () => result.current.toggle())
+
+    expect(provided.language).toBe('en')
+    expect(copyI18n.language).toBe('pt')
+  })
+})
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `cd apps/web && NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --project unit test/app/use-lang.test.tsx`
+Expected: FAIL — module not found.
+
+- [ ] **Step 3: Implement**
+
+```ts
+// apps/web/src/app/state/useLang.ts
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LANGS, type Lang } from '../../copy/i18n'
+
+export type { Lang }
+
+const STORAGE_KEY = 'shop_lang'
+
+function isLang(value: unknown): value is Lang {
+  return typeof value === 'string' && (LANGS as readonly string[]).includes(value)
+}
+
+// Two independent decisions, not one: whether a stored preference exists AND is a language we
+// ship, and what to pick when it does not. `shop_lang` is user-editable and survives deploys, so
+// an unsupported value degrades to the browser's choice rather than reaching i18next as a
+// language with no resources.
+function initialLang(): Lang {
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (isLang(stored)) return stored
+  return navigator.language.toLowerCase().startsWith('pt') ? 'pt' : 'en'
+}
+
+/**
+ * The only place the language changes. The instance comes from the provider rather than an
+ * import, because `src/copy/i18n.ts` deliberately keeps itself out of react-i18next's global
+ * default — the hook drives whichever instance its tree was given.
+ */
+export function useLang(): { lang: Lang; toggle(): void } {
+  const { i18n } = useTranslation()
+  const [lang, setLang] = useState<Lang>(initialLang)
+
+  useEffect(() => {
+    // `language`, not `resolvedLanguage`: only pt has a resource bundle (English keys render
+    // themselves), and i18next only resolves to a language that HAS translations, so
+    // `resolvedLanguage` is undefined while the app is in English. Guarding on it would compare
+    // undefined to 'en' and re-issue the call on every run.
+    if (i18n.language !== lang) void i18n.changeLanguage(lang)
+  }, [lang, i18n])
+
+  // Persisting belongs here and not in the effect: `shop_lang` records a CHOICE. Written on mount
+  // it would record a sniff instead, freezing the first visit's browser setting forever — a
+  // visitor who later switched their browser to Portuguese would keep getting English. Reading
+  // `lang` rather than the functional update is what makes the next value available to write, and
+  // is why this closes over `[lang]`; it is a prop two components deep and changes once per switch.
+  const toggle = useCallback(() => {
+    const next: Lang = lang === 'pt' ? 'en' : 'pt'
+    localStorage.setItem(STORAGE_KEY, next)
+    setLang(next)
+  }, [lang])
+
+  return { lang, toggle }
+}
+```
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Expected: PASS, 8 tests / 14 assertions.
+
+> **Amended twice after Task 3 shipped.** Both blocks are regenerated from the files as built.
+>
+> The draft's headline assertion, `expect(copyI18n.resolvedLanguage).toBe('en')`, **cannot pass against a correct implementation** — see the amended language constraint at the top of this plan. It is replaced by two assertions that are genuinely different claims: `t('Add to bag')` returning the key proves the copy changed, and `i18n.language` proves it changed to the language we actually ship. The ORDER matters: with `language` first, deleting `changeLanguage` aborts the test before `t()` runs, making `t()` an unproven passenger.
+>
+> The draft also spied no browser language on the toggle test while jsdom defaults to `en-US`, so the hook would have started in English and the assertion would have failed. Every test now declares the browser it assumes.
+>
+> **Behaviour decided here:** `shop_lang` is written only by `toggle`, never by the mount effect. `initialLang()` treats a stored value as "the user chose this" and ranks it above the browser, so writing a sniff into it made the hook lie to itself on the second visit — and made the navigator branch dead code forever after the first render, which is the guard-masking problem one level up. The cost: `toggle` closes over `[lang]` rather than using a functional update, so two toggles in the same tick would collapse into one. Writing inside the updater would be worse — StrictMode may invoke it twice and double-write.
+
+- [ ] **Step 5: Prove the assertions can fail**
+
+1. Delete the `i18n.changeLanguage` call → the toggle test's last assertion must go red. **This is the assertion the whole hook exists for**; if it stays green, the test is measuring its own `useState` and nothing else.
+2. Drop the `isLang` guard → the klingon test must go red.
+3. Invert the `startsWith('pt')` → both browser-default tests must go red.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/src/app/state/useLang.ts apps/web/test/app/use-lang.test.tsx
+git commit -m "feat(web): add the language hook backed by storage and the copy instance"
+```
+
+---
+
+### Task 4: `LinkInterceptor`
+
+**Files:**
+- Create: `apps/web/src/app/LinkInterceptor.tsx`
+- Test: `apps/web/test/app/link-interceptor.test.tsx`
+
+**Interfaces:**
+- Produces: `<LinkInterceptor>{children}</LinkInterceptor>` — a capture-phase click handler that upgrades plain same-origin anchor clicks to `navigate()`.
+
+This is what lets every UI component render a real `<a href>` and still get client-side routing. The PR 2 Storybook decorator is its story-side twin, and `AnchorGuard.stories.tsx` already pins the same five fall-through cases in Chromium — **the rules must not drift apart**: modifier keys, non-primary buttons, `target`, `download`, and cross-origin all belong to the browser.
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// apps/web/test/app/link-interceptor.test.tsx
+import { act, cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { type AnchorHTMLAttributes, type ReactNode } from 'react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { afterEach, describe, expect, it } from 'vitest'
+import { LinkInterceptor } from '../../src/app/LinkInterceptor'
+
+// Testing-library only auto-unmounts when vitest runs with `globals: true`, and this project does
+// not. Without this, every `screen` query after the first test also sees the previous renders and
+// the file dies on "found multiple elements" instead of on anything it means to assert.
+afterEach(cleanup)
+
+// The router's own idea of where it is, spelled exactly the way the interceptor spells it.
+// Asserting on the rendered route alone would prove the path and silently drop the query and the
+// fragment, which is the half of a location that a naive interceptor loses.
+function Here() {
+  const { pathname, search, hash } = useLocation()
+  return <output data-testid="here">{pathname + search + hash}</output>
+}
+
+// `.textContent`, never `toHaveTextContent('/')`: that matcher takes a string as a SUBSTRING, so
+// '/about' satisfies it and the assertion passes after a navigation it was written to forbid.
+// Measured, not assumed — with the matcher in place, nine separate guard mutations sailed past
+// this line and were caught only by the `defaultPrevented` assertion after it.
+function currentLocation() {
+  return screen.getByTestId('here').textContent
+}
+
+// A hand-built event rather than `userEvent`: these are the cases the browser really would act on,
+// and `button` and the modifier flags have to be set exactly. jsdom does act on them — an
+// uncancelled link click schedules a real navigation, surfacing as "Not implemented: navigation"
+// from a timer that fires after the test has already finished.
+//
+// So the outcome is read the way `AnchorGuard.stories.tsx` reads it, for the same reason and in
+// the same order: the interceptor decides in the CAPTURE phase, so by the BUBBLE phase the flag
+// is its decision. Record first, cancel second. In Chromium that story is buying back the
+// runner's own page; here it is only buying quiet, but a test whose failure mode is a stray async
+// log is a test nobody reads.
+function clickAndReportOutcome(anchor: Element, init: MouseEventInit = {}): boolean | undefined {
+  let intercepted: boolean | undefined
+  const record = (event: Event) => {
+    intercepted = event.defaultPrevented
+    event.preventDefault()
+  }
+  document.addEventListener('click', record)
+  try {
+    // `act`, even though a raw `dispatchEvent` is synchronous: React queues the state update from
+    // a `navigate()` outside act and does not flush it, so `Here` keeps rendering the OLD route
+    // and any "the route did not change" assertion passes while a navigation is pending. Measured
+    // — without this, nine guard mutations navigated and the route assertion below stayed green.
+    act(() => {
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }))
+    })
+  } finally {
+    document.removeEventListener('click', record)
+  }
+  // `undefined` means the click never reached the document, which is a broken test rather than a
+  // fall-through — it fails the comparisons below instead of passing as "not intercepted".
+  return intercepted
+}
+
+function renderWithRouter(children: ReactNode) {
+  return render(
+    <MemoryRouter initialEntries={['/']}>
+      <LinkInterceptor>{children}</LinkInterceptor>
+      <Here />
+      <Routes>
+        <Route path="/" element={<p>home</p>} />
+        <Route path="/about" element={<p>about page</p>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+describe('LinkInterceptor', () => {
+  it('navigates client-side for a plain same-origin anchor', async () => {
+    renderWithRouter(<a href="/about">About</a>)
+    await userEvent.click(screen.getByText('About'))
+    // `queryByText`, not `findByText(...)` + `toBeInTheDocument()`: `findByText` already throws
+    // when the text is absent, so the matcher after it can never be the thing that fails.
+    expect(screen.queryByText('about page')).toBeInTheDocument()
+  })
+
+  it('navigates when the click lands on a child of the anchor', async () => {
+    // Real clicks land on the <span>, not the <a>. A handler that reads `event.target` as the
+    // anchor works in a story with bare text and fails on every composed component — and every
+    // link in this design is composed: a card title, a thumbnail, an eyebrow above a heading.
+    renderWithRouter(
+      <a href="/about">
+        <span>Nested</span>
+      </a>,
+    )
+    await userEvent.click(screen.getByText('Nested'))
+    expect(screen.queryByText('about page')).toBeInTheDocument()
+  })
+
+  it('carries the query string and the fragment, not just the path', async () => {
+    // Both are live in this design: `routes.thanks()` builds a query and the product page links
+    // to `#specs`. Navigating with the path alone renders the right screen while losing the
+    // filter and the scroll target, so nothing that checks the rendered route can catch it.
+    renderWithRouter(<a href="/about?from=card#specs">Deep</a>)
+    await userEvent.click(screen.getByText('Deep'))
+    expect(currentLocation()).toBe('/about?from=card#specs')
+  })
+
+  it('cancels the click it takes over, so the browser does not also load the page', () => {
+    // The other half of interception, and invisible to every route assertion in this file: an
+    // interceptor that navigates client-side WITHOUT cancelling leaves the browser to do a full
+    // page load on top, which under jsdom is a stray log and in a browser is the whole SPA
+    // reloading on every link. This is `SameOriginClickIsIntercepted` from the story twin.
+    renderWithRouter(<a href="/about">About</a>)
+    expect(clickAndReportOutcome(screen.getByText('About'))).toBe(true)
+  })
+
+  it('intercepts target="_self", which is the explicit spelling of "no target"', async () => {
+    // Pins the `!== '_self'` half of the target guard. Without it, every anchor that spells out
+    // the default browsing context drops to a full page load — a real regression that looks like
+    // "the target guard works" if `_blank` is the only case tested.
+    renderWithRouter(
+      <a href="/about" target="_self">
+        Self
+      </a>,
+    )
+    await userEvent.click(screen.getByText('Self'))
+    expect(screen.queryByText('about page')).toBeInTheDocument()
+  })
+
+  it('leaves a click that is not inside a link alone, on a page that has links', async () => {
+    // The link is here on purpose. The failure this guards is not "the interceptor crashed on a
+    // button" but "the interceptor found SOME link and followed it" — the shape a `CartLine` hits
+    // when its stepper sits next to a link to the product. With no anchor in the tree, a lookup
+    // that ignores `event.target` entirely still finds nothing and the test proves nothing.
+    renderWithRouter(
+      <>
+        <a href="/about">About</a>
+        <button type="button">Add to bag</button>
+      </>,
+    )
+    await userEvent.click(screen.getByRole('button'))
+    expect(currentLocation()).toBe('/')
+  })
+
+  it('does not navigate when something above the root already handled the click', async () => {
+    // Capture phase is not first in line: a native listener on `document` runs before React's,
+    // which is bound to the root container. A click that has already been cancelled has already
+    // been decided by whoever cancelled it, and re-deciding it here is how an interceptor turns
+    // "dismiss the drawer" into "dismiss the drawer AND follow the link underneath".
+    // `defaultPrevented` is true either way here, so the route is the only observable difference.
+    const cancel = (event: Event) => event.preventDefault()
+    document.addEventListener('click', cancel, true)
+    try {
+      renderWithRouter(<a href="/about">About</a>)
+      await userEvent.click(screen.getByText('About'))
+      expect(currentLocation()).toBe('/')
+    } finally {
+      document.removeEventListener('click', cancel, true)
+    }
+  })
+
+  // Every row is a separate `if` in the component, and the four modifier keys are separate
+  // operands of one `||`. A mutation that deletes the whole early-return block reddens all of
+  // them at once and proves none of them individually, so each reason gets its own row.
+  const fallThrough: Array<[string, AnchorHTMLAttributes<HTMLAnchorElement>, MouseEventInit]> = [
+    ['the meta key is held', { href: '/about' }, { metaKey: true }],
+    ['the ctrl key is held', { href: '/about' }, { ctrlKey: true }],
+    ['the shift key is held', { href: '/about' }, { shiftKey: true }],
+    ['the alt key is held', { href: '/about' }, { altKey: true }],
+    ['the click is not the primary button', { href: '/about' }, { button: 1 }],
+    ['the anchor has target', { href: '/about', target: '_blank' }, {}],
+    ['the anchor has download', { href: '/about', download: '' }, {}],
+    ['the anchor is cross-origin', { href: 'https://example.com/x' }, {}],
+    ['the href is a mailto', { href: 'mailto:a@b.c' }, {}],
+  ]
+
+  it.each(fallThrough)('falls through to the browser when %s', (_case, anchorProps, clickInit) => {
+    renderWithRouter(<a {...anchorProps}>Link</a>)
+
+    const intercepted = clickAndReportOutcome(screen.getByText('Link'), clickInit)
+
+    // Two claims, and each is the first to break under a different mutation. The router did not
+    // take it: deleting any single guard navigates and reddens this line. And the browser still
+    // gets it: an interceptor that cancels a click and then declines to handle it leaves the
+    // route alone while killing cmd-click, download and mailto in silence, which only the flag
+    // can see. The route goes first because it is the line the nine guard mutations reach.
+    expect(currentLocation()).toBe('/')
+    expect(intercepted).toBe(false)
+  })
+})
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `cd apps/web && NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --project unit test/app/link-interceptor.test.tsx`
+Expected: FAIL — module not found.
+
+- [ ] **Step 3: Implement**
+
+```tsx
+// apps/web/src/app/LinkInterceptor.tsx
+import { type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
+import { interceptableAnchor, routeTargetOf } from './anchors'
+
+/**
+ * One click handler at the app root upgrades same-origin anchor clicks to client-side navigation,
+ * so every component in `ui/` can render a real `<a href>` built from `ui/routes.ts` and none of
+ * them imports the router. The links stay real links: right-click, "copy link address", middle
+ * click and view-source all keep working, and the page is still navigable before JS has run.
+ *
+ * Which clicks those are is `interceptableAnchor`'s decision, shared with the Storybook preview
+ * so the `AnchorGuard` stories exercise this exact rule in a real browser.
+ */
+export function LinkInterceptor({ children }: { children: ReactNode }) {
+  const navigate = useNavigate()
+
+  return (
+    <div
+      onClickCapture={(event) => {
+        // Not part of the shared rule, because it is a different question: `interceptableAnchor`
+        // asks "is this the router's click?", and this asks "has this click already been decided?"
+        // Only the app root ever needs it. Capture phase means "before anything INSIDE the app
+        // sees this click", not "before anything at all" — a handler bound above the root, a modal
+        // backdrop or a native listener on `document`, still runs first. The Storybook decorator
+        // is the outermost element in the preview iframe, so nothing can get there before it.
+        if (event.defaultPrevented) return
+        const anchor = interceptableAnchor(event)
+        if (!anchor) return
+        event.preventDefault()
+        void navigate(routeTargetOf(anchor))
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Expected: PASS, 16 tests (7 named + 9 `it.each` cases).
+
+> **Amended after Task 4 shipped. My draft was wrong in four places and the PR 2 twin was right in all four** — `preview.tsx` has been correct since commit 936a7ae, and I wrote this snippet from scratch instead of deriving it from the file I told the implementer to reconcile against. The corrections:
+>
+> 1. **`target="_self"` is a real behaviour bug.** `if (anchor.target || …) return` falls through on `_self`, which is the explicit spelling of "no target" — a full page load where the app should have routed.
+> 2. **`anchor.origin`, not `new URL(href, location.href)`.** Same answer on every case, but `new URL` throws on a malformed href, inside a click handler — where, per the trap above, a throw fails no assertion.
+> 3. **`closest('a[href]')`** rather than `closest('a')` plus a separate `!href` check.
+> 4. **`event.target instanceof Element`** rather than `(event.target as Element | null)?.closest?.()`. The cast plus two optional chains hid that `event.target` is an `EventTarget`; the `instanceof` narrows it without a cast and is the correct runtime check.
+>
+> **The draft's test was also passing for the wrong reason twice.** `toHaveTextContent('/')` matched `'/about'` by substring, leaving nine mutations green; and `dispatchEvent` outside `act()` left the DOM stale, so "the route did not change" was true even with a navigation pending. Both are fixed in the regenerated block above.
+>
+> **Followed by a structural change:** `interceptableAnchor` now lives in `apps/web/src/app/anchors.ts` and is imported by both `LinkInterceptor` and `.storybook/preview.tsx`. The duplication was defended as keeping the story an independent witness, but the witness only has value if somebody compares the copies, and this task is the proof that nobody does. **Corrected in the sweep, because the shipped comment in `preview.tsx` already disowns the version that stood here:** the two copies had NOT "drifted in four places" in the tree. The four differences were between this plan's draft snippet and the already-committed `preview.tsx`, caught in review, never coexisting — the branch came within one review of shipping them, and no test in either project could have seen a single one. The failure mode also ran the wrong way: with two copies, breaking `LinkInterceptor` left `AnchorGuard.stories.tsx` green.
+
+
+```ts
+// apps/web/src/app/anchors.ts
+import { type MouseEvent } from 'react'
+
+/**
+ * The one rule for "is this click the router's, or the browser's?".
+ *
+ * Two things apply it: `LinkInterceptor` at the app root, and the `AnchorGuard` decorator in
+ * `.storybook/preview.tsx`, which has to make the same call because a real `<a href>` in a story
+ * is a live link with no router behind it. `AnchorGuard.stories.tsx` exercises the decorator in
+ * real Chromium, so as long as both sides call THIS function, that story is evidence about the
+ * app. It used to be a second copy of the rule, and Task 4 came within one review of shipping four
+ * differences between them — none of which any test could have caught, because each copy was only
+ * ever exercised by its own project. A story that passes while the app is broken is worse than no
+ * story, because it reads as proof.
+ *
+ * Kept free of react-router (and of anything else the app pulls in) on purpose: it is a pure DOM
+ * predicate, so importing it into the Storybook preview does not drag the router into every
+ * story bundle. The `react` import is types only and disappears at compile time.
+ *
+ * Six independent reasons to leave a click alone, each of them something a person deliberately
+ * does: a middle click or a held modifier opens the link in a second tab, `target` asks for
+ * another browsing context, `download` saves a file, a cross-origin or `mailto:` href leaves the
+ * app entirely, and a click that is not inside a link is not a navigation at all. They are
+ * separate `if`s rather than one condition because they are separate decisions — merged, a single
+ * test could "cover" all six while proving none of them.
+ */
+export function interceptableAnchor(event: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  if (!(event.target instanceof Element)) return null
+  // `closest`, not `event.target`: a real click lands on whatever is innermost — the <span> in a
+  // card title, the <img> in a thumbnail — and only equals the <a> when the link is bare text.
+  const anchor = event.target.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+  // `_self` is the explicit spelling of "no target"; any other value asks for another browsing
+  // context, which is the browser's job and not the router's.
+  const target = anchor.getAttribute('target')
+  if (target && target !== '_self') return null
+  // `anchor.origin` is the RESOLVED origin of the href, so a relative path is same-origin while a
+  // non-HTTP scheme (`mailto:`, `tel:`) serialises to the string "null" and falls through here.
+  // Reading it off the element rather than building `new URL(href, location.href)` also means a
+  // malformed href can never throw out of a click handler.
+  if (anchor.origin !== window.location.origin) return null
+  return anchor
+}
+
+/**
+ * Where the router should go for an anchor it has taken over: the location INSIDE the app, never
+ * `href`. An absolute URL handed to `navigate()` is treated as a relative path — `/https:/…`.
+ */
+export function routeTargetOf(anchor: HTMLAnchorElement): string {
+  return anchor.pathname + anchor.search + anchor.hash
+}
+```
+- [ ] **Step 5: Prove the assertions can fail**
+
+1. Replace `.closest('a')` with `event.target as HTMLAnchorElement` → the nested-child test must go red.
+2. Delete the modifier-key guard → the ctrl-key case must go red.
+3. Delete the origin comparison → both the cross-origin and the mailto cases must go red.
+4. Delete the `target`/`download` guard → those two cases must go red.
+
+- [ ] **Step 6: Check the rules against the story-side twin**
+
+Open `apps/web/src/ui/primitives/AnchorGuard.stories.tsx` and confirm the five fall-through cases it pins are the same five this component implements. If they differ, one of them is wrong — say which and why, and fix that one rather than making the tests agree by weakening either.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/web/src/app/LinkInterceptor.tsx apps/web/test/app/link-interceptor.test.tsx
+git commit -m "feat(web): add the root link interceptor"
+```
+
+---
+
+## Tasks 5–10: the UI layer
+
+**All six read `2026-09-09-webshop-v2-03-prototype-extract.md` first.** It carries the verbatim pt-BR copy, the token mapping, the per-component structure notes and — most importantly — the list of things the design does not give us and that are therefore being designed here rather than transcribed.
+
+Shared rules for every component task, so they are not repeated six times:
+
+- **Every component gets a `.stories.tsx` beside it**, rendering from `src/fixtures/` only. No network mocks, no `msw`, no hand-built product objects — the fixtures are typed against the real `@shop/shared` schemas and deep-frozen, and a story that needs data the fixtures do not have should extend the fixtures, not inline a literal.
+- **The component is stateless.** `useState`, `useEffect`, `useRef`, `useReducer`, `useLayoutEffect` are rejected by `test/ui-boundaries.test.ts`. State the design implies lives in the container (Task 11); the component receives it as props and reports intent through callbacks.
+- **Callbacks are `fn()` spies from `storybook/test`** in stories, and every `play` assertion is on a spy call or on the DOM — never on a story's own local variable.
+- **A controlled input in a story holds its value in `useState` inside `render`, never `useArgs`.** Under the vitest browser project there is no manager to service `updateArgs`, so `useArgs` fails loudly and the story is red — this is documented in `TextInput.stories.tsx`.
+- **Every `t('...')` added needs its `pt.json` entry in the same commit** or `copy.test.ts` fails. Use the six keys planted in PR 2 rather than adding synonyms.
+- **Every new assertion is proved able to fail** by mutating what it guards, and the proof is reported with the task.
+- **axe runs as an error gate on every story.** At page scale `region`, `heading-order`, `landmark-unique` and `page-has-heading-one` start firing for the first time on this branch. Fix the markup; never disable a rule.
+- Reuse the PR 2 primitives (`PillButton`, `Eyebrow`, `Price`, `Stepper`, `RuledList`, `StatusPill`, `ImageFrame`, `TextInput`, `TextArea`, `Select`, `FieldLabel`, `LangToggle`, `Stat`). If a primitive is close but not right, extend it there rather than re-implementing a variant locally — and say what you changed.
+
+Each task ends with: `npx tsc -p tsconfig.json --noEmit`, `NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --project storybook`, an orphan check, and one commit.
+
+---
+
+### Task 5: Shop chrome — `ShopHeader`, `CartLine`, `CartDrawer`
+
+**Files:** create `src/ui/shop/{ShopHeader,CartLine,CartDrawer}.tsx` + stories, `src/ui/shop/index.ts`; modify `src/copy/pt.json`, `src/index.css` (gutter token).
+
+**Interfaces — produced:**
+
+```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep); the files carry the doc comments.
+interface ShopHeaderProps {
+  cartCount: number
+  lang: 'pt' | 'en'
+  onToggleLang(): void
+  onOpenCart(): void
+}
+
+interface CartLineData {
+  slug: string
+  name: string        // already resolved for the current language by the parent
+  subtitle: string
+  unitCents: number
+  qty: number
+  lineCents: number
+}
+
+interface CartLineProps {
+  line: CartLineData
+  lang: 'pt' | 'en'      // ⚠️ was missing in the draft — see the note under this task
+  onInc(slug: string): void
+  onDec(slug: string): void
+}
+
+interface CartDrawerProps {
+  open: boolean
+  lang: 'pt' | 'en'      // ⚠️ was missing in the draft — see the note under this task
+  lines: CartLineData[]
+  itemsCents: number
+  shippingCents: number | null   // null renders the em dash
+  totalCents: number
+  onInc(slug: string): void
+  onDec(slug: string): void
+  onClose(): void
+}
+```
+
+- [ ] **Step 1: Add the gutter token**
+
+The page gutter `clamp(20px,5vw,64px)` appears verbatim six times in the prototype. Add it once to `index.css`'s `@theme` as `--spacing-gutter` and use `px-gutter` everywhere, instead of repeating the arbitrary value.
+
+- [ ] **Step 2: Build `ShopHeader`**
+
+Semantics the prototype lacks and this must add: a real `<header>` containing a real `<nav>`; `Sobre` is an `<a href={routes.about()}>`; the brand is an `<a href={routes.home()}>`; the bag is a `<button>` (it opens a drawer, it does not navigate). The `Admin` nav item is **dropped** — spec:11 makes the admin unlinked.
+
+The bag button must announce its count to assistive tech, not just show it: `Sacola (2)` read as "Bag 2" is fine, `Sacola` with a visual 2 is not.
+
+- [ ] **Step 3: Story — the header reports intent**
+
+```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
+export const OpensTheBag: Story = {
+  args: { cartCount: 2, lang: 'pt', onOpenCart: fn(), onToggleLang: fn() },
+  play: async ({ args, canvas, userEvent }) => {
+    await userEvent.click(canvas.getByRole('button', { name: /sacola/i }))
+    await expect(args.onOpenCart).toHaveBeenCalledOnce()
+  },
+}
+
+export const AboutIsAnAnchorNotAButton: Story = {
+  args: { cartCount: 0, lang: 'pt', onOpenCart: fn(), onToggleLang: fn() },
+  play: async ({ canvas }) => {
+    // The whole navigation design rests on this: real hrefs, upgraded by LinkInterceptor.
+    // A <button onClick> here would still "work" in the app and break cmd-click, crawling
+    // and the middle-click that AnchorGuard.stories.tsx pins.
+    await expect(canvas.getByRole('link', { name: /sobre/i })).toHaveAttribute('href', '/about')
+  },
+}
+```
+
+- [ ] **Step 4: Build `CartLine` and `CartDrawer`**
+
+Two decisions the prototype forces and that must be made here, not deferred:
+
+1. **The empty drawer.** The prototype renders the totals footer and an *enabled* checkout CTA over an empty bag, and clicking it opens a checkout with nothing in it. Do not reproduce that. Show `A sacola está vazia.` and either hide the CTA or disable it — pick one, implement it, and say which.
+2. **The quantity cap.** `useCart` silently refuses to go past `CART_MAX_QTY`, so the `+` control appears to do nothing at the cap. Either disable `+` at the cap or explain it. Silence is the one option that is not acceptable.
+
+The drawer is `role="dialog"` with `aria-modal="true"` and an accessible name from its `Sua sacola` heading. It **cannot** trap focus or handle Escape itself — those need effects, which the purity rule forbids. Task 11 owns them; note it in the component so the next reader does not think it was forgotten.
+
+Use the `Stepper` primitive rather than rebuilding the three-cell control.
+
+- [ ] **Step 5: Stories — the drawer's behaviour**
+
+```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
+export const IncrementsAndDecrementsBySlug: Story = {
+  args: { open: true, lines: [/* two fixture lines */], onInc: fn(), onDec: fn(), onClose: fn(), /* totals */ },
+  play: async ({ args, canvas, userEvent }) => {
+    const second = canvas.getAllByRole('group', { name: /quantidade/i })[1]!
+    // The Stepper primitive labels its buttons `Aumentar`/`Diminuir quantidade` — a query for
+    // the '+' glyph finds nothing.
+    await userEvent.click(within(second).getByRole('button', { name: /aumentar/i }))
+    // The slug, not just "it fired": a drawer that reports the wrong line is worse than one
+    // that reports nothing, and a bare toHaveBeenCalled() passes for both.
+    await expect(args.onInc).toHaveBeenCalledWith(args.lines[1]!.slug)
+  },
+}
+
+export const Empty: Story = { /* asserts the message AND that no enabled checkout CTA exists */ }
+export const ShippingUnknownShowsAnEmDash: Story = { /* shippingCents: null */ }
+```
+
+- [ ] **Step 6: Prove, verify, commit**
+
+Mutations to run: swap `onInc`/`onDec` (the by-slug test must redden); make the empty drawer render an enabled CTA (the empty test must redden).
+
+⚠️ **Do not use the draft's third mutation as written.** "Render the em dash unconditionally" does NOT redden `ShippingUnknownShowsAnEmDash` — an unconditional em dash still satisfies it. It reddens the *other* story. A guard with two directions needs a story for each, and a mutation that reddens the opposite story to the one you predicted is telling you the assertion is anchored to the wrong side.
+
+```bash
+git add apps/web/src/ui/shop apps/web/src/copy/pt.json apps/web/src/index.css
+git commit -m "feat(web): add the shop header and the cart drawer"
+```
+
+---
+
+### Task 6: Home components — `Hero`, `FeaturedCard`, `ProductCard`, `CatalogGrid`, `ClosingBlock`
+
+**Files:** create the five components + stories in `src/ui/shop/`; modify `src/ui/shop/index.ts`, `src/copy/pt.json`.
+
+**Interfaces — produced:**
+
+```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep).
+interface HeroProps { featured: PublicProduct | null; lang: 'pt' | 'en' }
+interface FeaturedCardProps { product: PublicProduct; lang: 'pt' | 'en' }
+interface ProductCardProps { product: PublicProduct; lang: 'pt' | 'en' }
+interface CatalogGridProps { products: readonly PublicProduct[]; lang: 'pt' | 'en' }
+interface ClosingBlockProps { contactEmail: string }
+```
+
+- [ ] **Step 1: Build them**
+
+Notes that matter, all from the extract: the catalog grid is `auto-**fill**` where everything else is `auto-fit`; the product card is a real `<a href={routes.product(slug)}>` wrapping the whole card, not a div with onClick; the hero's `<em>` wraps exactly `faço com as mãos`; `ClosingBlock`'s link becomes a real `mailto:` built with `routes.mailto(contactEmail, ...)` — the design has `href="#"` and no address anywhere.
+
+`CatalogGrid` with zero products needs an empty state the design does not have. Write one in the established language; do not render an empty grid.
+
+- [ ] **Step 2: Stories**
+
+`Hero` (with a featured product, and with `featured: null` — the API returns no featured product until one is flagged), `ProductCard` (in stock, made to order, sold out, digital), `CatalogGrid` (full catalogue, single item, empty), `ClosingBlock`.
+
+```tsx
+// STORY SKETCH — the shipped story is `ProductCard.stories.tsx`’s `MadeToOrder`, which asserts more. Not the file.
+export const CardLinksToTheProduct: Story = {
+  args: { product: letter, lang: 'pt' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('link')).toHaveAttribute('href', `/exhibit/${letter.slug}`)
+  },
+}
+
+export const SoldOutIsStatedNotJustStyled: Story = {
+  args: { product: { ...letter, stock: 0 }, lang: 'pt' },
+  play: async ({ canvas }) => {
+    // Availability communicated by colour or position alone fails WCAG 1.4.1 and is invisible
+    // to a screen reader. The text is the contract.
+    await expect(canvas.getByText('Esgotado')).toBeInTheDocument()
+  },
+}
+```
+
+- [ ] **Step 3: Prove, verify, commit**
+
+Mutations: point the card href at `routes.home()`; render the sold-out label unconditionally.
+
+⚠️ **The draft worded that second mutation backwards** and Task 6 measured the real shape. Rendering "sold out" unconditionally leaves the **sold-out story GREEN** — it is the in-stock, made-to-order and digital stories that redden. The draft said the in-stock story "must still pass", which would mean nothing catches the mutation at all; an implementer following it literally deletes the assertion doing the work. **General lesson: when a mutation forces one branch of a conditional, the story exercising THAT branch is the one that cannot catch it.**
+
+```bash
+git commit -m "feat(web): add the home hero, catalog grid and closing block"
+```
+
+---
+
+### Task 7: Product components — `ProductGallery`, `SpecsTable`
+
+**Files:** create both + stories; modify `index.ts`, `pt.json`.
+
+**Interfaces — produced:**
+
+```ts
+// INTERFACE SKETCH — matches the shipped props (checked in the sweep).
+interface ProductGalleryProps {
+  product: PublicProduct
+  lang: 'pt' | 'en'
+  selectedPhoto: number          // index into product.photos
+  onSelectPhoto(index: number): void
+}
+interface SpecsTableProps { specs: PublicProduct['specs']; lang: 'pt' | 'en' }
+```
+
+- [ ] **Step 1: Build them**
+
+`SpecsTable` is a `<dl>`/`<dt>`/`<dd>`, not divs — it is literally a description list, and the semantics are free. The key is uppercased and `opacity-55`; the value is `text-right` at full opacity and keeps its casing.
+
+`ProductGallery` adds selection, which the prototype does not have: the thumbs are `<button>`s, the selected one has a visible indicator that is **not** opacity alone, and the current selection is announced (`aria-pressed` or an equivalent). Alt text comes from `photo.alt[lang]` when present; when it is absent, decide between the planted `Photo of {{name}}` key and an empty `alt` for a decorative image — and say which, because Task 12 resolves that key either way.
+
+A product with **no photos** must render the paper-coloured placeholder from spec:219, not a broken image.
+
+- [ ] **Step 2: Stories**
+
+`ProductGallery`: three photos with the first selected, third selected, single photo (no thumb row), no photos at all. `SpecsTable`: four specs, one spec, and the empty case.
+
+```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
+export const SelectingAThumbReportsItsIndex: Story = {
+  play: async ({ args, canvas, userEvent }) => {
+    // ⚠️ The draft queried /detalhe|foto/i. "Detalhe" comes from the prototype's thumbnail
+    // placeholders, which the extract (§4.7) says are EDITOR INSTRUCTIONS, not alt text — against
+    // the fixtures, `letter.photos[0].alt.pt` is "Carta sobre a mesa" and matches neither
+    // alternative, so this returned a one-element array and clicked `undefined`. Query the
+    // accessible name the component actually gives the control.
+    await userEvent.click(canvas.getAllByRole('button', { name: /foto/i })[1]!)
+    await expect(args.onSelectPhoto).toHaveBeenCalledWith(1)
+  },
+}
+
+export const TheSelectedThumbIsDistinguishableWithoutColour: Story = {
+  play: async ({ canvas }) => {
+    const [first, second] = canvas.getAllByRole('button')
+    await expect(first).toHaveAttribute('aria-pressed', 'true')
+    await expect(second).toHaveAttribute('aria-pressed', 'false')
+  },
+}
+```
+
+- [ ] **Step 3: Prove, verify, commit**
+
+Mutations: hard-code index `0` in the click handler; drop `aria-pressed`. Both must redden.
+
+```bash
+git commit -m "feat(web): add the product gallery and specs table"
+```
+
+---
+
+### Task 8: About components — `AboutBlocks`, `AboutFacts`, `AboutClosing`
+
+**Files:** create the three + stories; modify `index.ts`, `pt.json`.
+
+**Interfaces — produced:**
+
+```ts
+// ⚠️ AMENDED after Task 8. The drafted `blocks` / `facts` props were not just a style choice —
+// they were RED ON ARRIVAL. `copy.test.ts` scans only `src/ui` for literal `t('…')` call sites and
+// fails on any pt.json key no call site accounts for. Copy "resolved by the container" is resolved
+// in `src/app/routes/AboutRoute.tsx`, which the scanner never walks, so all 19 keys would have been
+// unaccounted for. The same test pins the number of DYNAMIC `t()` sites at exactly one
+// (`StatusPill`), so a `BLOCKS.map(t)` table is unavailable too. Wherever this copy lives it must
+// be spelled-out literals inside `src/ui`. The draft asked for `t()` calls AND container-resolved
+// props; those two halves cannot both hold.
+interface AboutBlocksProps { /* none — the component owns its copy, like the other 13 shop components */ }
+interface AboutFactsProps { /* none — same */ }
+interface AboutClosingProps { contactEmail: string }   // configuration, not copy; same prop ClosingBlock takes
+```
+
+- [ ] **Step 1: Decide where the About content lives**
+
+The three blocks and four facts are hardcoded in the prototype. They are copy, so they belong in `pt.json` behind `t()` calls, with the components taking the resolved strings as props — which is what the interfaces above say. The alternative (a `fixtures/about.ts`) makes them data that is never translated. Choose the `t()` route unless you find a reason not to, and record it.
+
+`4 peças no catálogo` goes stale the moment a fifth product exists. Either derive that one fact from the catalogue length in the container, or accept it as static copy — decide and say which.
+
+- [ ] **Step 2: Build, with real heading levels**
+
+The page has one `<h1>` (the About hero) and the three blocks are `<h2>`. The prototype's closing heading is a `<div>`; make it an `<h2>` too. `heading-order` will fail on any skip, and this is the first page on the branch with enough headings for it to fire.
+
+`AboutFacts` is `<dl>` again: the value is the `<dd>`, the label the `<dt>` — note the visual order is value-then-label, which is the reverse of the DOM order a `<dl>` wants. Use `flex-col-reverse` rather than lying about which is which.
+
+> **Refinement measured in Task 8.** Task 7 found axe silent on an EMPTY `<dl>`; that does not generalise to `<dl>` structure. Nesting `<dt>`/`<dd>` one level deeper trips `definition-list` and `dlitem` loudly. What axe genuinely cannot see is **which `<dd>` belongs to which `<dt>`** — four terms followed by four definitions passes clean with every text assertion still green. That is the case an explicit pairing assertion earns its keep on.
+
+- [ ] **Step 3: Stories, prove, commit**
+
+One story each, plus `AboutFacts` with a single fact (the grid must not collapse oddly).
+
+```bash
+git commit -m "feat(web): add the about page components"
+```
+
+---
+
+### Task 9: Checkout sections and the summary panel
+
+The largest component task, and the one with the most that is designed rather than transcribed: the prototype has **no error, validation, loading or disabled states at all**.
+
+**Files:** create `CheckoutBuyerSection`, `CheckoutAddressSection`, `CheckoutShippingSection`, `CheckoutNotesSection`, `CheckoutPaymentSection`, `OrderSummaryPanel` + stories; modify `index.ts`, `pt.json`.
+
+**Interfaces — produced:**
+
+```ts
+// INTERFACE SKETCH — the shipped `CheckoutSection.tsx` also exports `CheckoutField` and the error table. Not the file.
+// One shape for all four form sections, so the page wires them identically.
+interface SectionProps<T> {
+  values: T
+  errors: FieldErrors            // from @shop/shared, keyed 'buyer.email', 'shippingAddress.postalCode', …
+  onChange(field: string, value: string): void
+}
+
+type BuyerValues = { name: string; email: string; phone: string }
+type AddressValues = { country: string; postalCode: string; street: string; number: string; complement: string; district: string; city: string; state: string }
+type NotesValues = { notes: string; giftMessage: string; referral: string }
+
+interface CheckoutShippingSectionProps {
+  options: readonly ShippingMethodInfo[]   // from shippingOptionsFor(country)
+  selected: ShippingMethod | null
+  lang: 'pt' | 'en'
+  errors: FieldErrors
+  onSelect(method: ShippingMethod): void
+}
+
+interface OrderSummaryPanelProps {
+  lines: CartLineData[]
+  itemsCents: number
+  shippingCents: number | null
+  totalCents: number
+  shippingMethodName: string | null
+  lang: 'pt' | 'en'
+  submitting: boolean
+  submitError: string | null
+  onSubmit(): void
+}
+```
+
+- [ ] **Step 1: The address section is country-aware**
+
+Brazil shows CEP / bairro / estado; other countries show the generic fields. This is not cosmetic — `checkoutRules` enforces `invalid_cep`, `required` number, `required` district and `invalid_state` **only** when `country === 'BR'`, so a form that shows Brazilian fields for France collects data the API will reject and hides fields it requires.
+
+- [ ] **Step 2: Errors are announced, not just coloured**
+
+`FieldErrors` is `Record<string, string[]>` with **stable codes** (`required`, `invalid_cep`, `not_allowed`, `invalid_state`, `not_available`), because the API emits codes and the web translates them. Zod's own errors are raw English prose. **One translation table handles both** — write it once here, keyed by code, with a fallback that renders the raw message rather than swallowing it.
+
+Use `TextInput`'s `error` prop, which PR 2 already wired to `aria-errormessage` and proved with `toHaveAccessibleErrorMessage`.
+
+- [ ] **Step 3: Shipping options are real radios**
+
+`<input type="radio">` in a `<fieldset>` with a `<legend>`, keyboard-navigable, with a visible focus ring. The prototype's 11px dot is the *visual*, not the mechanism. Measure the selected dot's contrast against its row: an 11px indicator is a non-text element and needs 3:1 under WCAG 1.4.11.
+
+- [ ] **Step 4: Stories — the states the design never drew**
+
+`CheckoutBuyerSection`: empty, filled, with errors on every field. `CheckoutAddressSection`: BR empty, BR filled, international filled, with errors. `CheckoutShippingSection`: BR (PAC and SEDEX), international (one option), none selected with a `required` error. `OrderSummaryPanel`: normal, submitting (button disabled, with the busy state in a `role="status"` line — **not** by renaming the button, which contradicts the story's own `getByRole({ name: /pagar/i })` query and takes away the name a voice-control user asks for), `submitError` set, empty cart, and **empty shipping options** — `shippingOptionsFor('ZW')` returns `[]`, which is reachable and renders a 1px ink rectangle containing nothing.
+
+```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
+export const CountryDrivesTheFields: Story = {
+  args: { values: { ...FR_ADDRESS, country: 'FR' }, errors: {}, onChange: fn() },
+  play: async ({ canvas }) => {
+    await expect(canvas.queryByLabelText(/cep/i)).not.toBeInTheDocument()
+    await expect(canvas.getByLabelText(/código postal|postal code/i)).toBeInTheDocument()
+  },
+}
+
+export const SubmittingDisablesTheButton: Story = {
+  args: { submitting: true, onSubmit: fn() },
+  play: async ({ args, canvas }) => {
+    const button = canvas.getByRole('button', { name: /pagar/i })
+    await expect(button).toBeDisabled()
+    // ⚠️ NOT `userEvent.click`. `PillButton` paints `pointer-events-none` on a disabled control,
+    // so userEvent THROWS ("Unable to perform pointer interaction") before reaching the assertion
+    // below — the draft's version is red on correct code and red on broken code alike. A raw
+    // `.click()` is what distinguishes them: the browser refuses to dispatch it to a disabled
+    // button and would dispatch it to an enabled one.
+    button.click()
+    // Double-submitting a checkout creates two pending orders and two Stripe sessions.
+    await expect(args.onSubmit).not.toHaveBeenCalled()
+  },
+}
+```
+
+- [ ] **Step 5: Prove, verify, commit**
+
+Mutations: render the BR fields unconditionally; drop the `disabled` while submitting; remove `aria-errormessage` wiring. Each must redden its story.
+
+```bash
+git commit -m "feat(web): add the checkout sections and order summary"
+```
+
+---
+
+### Task 10: Pages — `ShopShell`, `HomePage`, `ProductPage`, `AboutPage`, `CheckoutPage`, `DonePage`
+
+**Files:** create the six + stories in `src/ui/pages/`, plus `src/ui/pages/index.ts`; modify `pt.json`.
+
+Pages are pure compositions: they take fully-resolved props and render components. No data fetching, no state, no routing. This is what makes a full-page Storybook possible without a single mock, which is the thing Augusto asked for.
+
+**Interfaces — produced:** each page takes the union of what its components need, plus `lang`. `ShopShell` takes `header` props, `drawer` props and `children`.
+
+- [ ] **Step 0a: Decide whether `CartLineData` gains a `type`** (raised by Task 9)
+
+The prototype's summary line reads `{{qty}} × {{unit}} · {{type}}` (`físico` / `digital`). `CartLineData` has no `type`, so the last third is not expressible; adding one edits Task 5's view model and the `lineOf` derivation built on it. Either add it and render the full line, or drop that third deliberately and say so — do not leave the summary silently two-thirds of the design.
+
+- [ ] **Step 0: Build the two components the file map forgot** (raised by Task 8)
+
+`AboutHero` and the `← Catálogo` back bar have no owner anywhere in this plan. The extract is emphatic that the About hero differs from the Home hero in five measured ways and must not share an implementation, yet the file map gives `Hero` to the home page and nothing to About; and the back bar is byte-identical at the top of both the Product and About pages. Left as drafted they land inline inside pages whose stated job is composition. Build both in `src/ui/shop/` with their own stories, then compose.
+
+- [ ] **Step 1: Build the pages**
+
+Landmarks matter now: `ShopShell` renders `<header>` and a single `<main>`; pages render their content inside it. `region` fails on any content outside a landmark, `landmark-unique` on a second `<main>`, and `page-has-heading-one` on a page with no `<h1>` — `DonePage`'s headline is a `<div>` in the prototype and must become one.
+
+`DonePage` needs three states, and they are not decorative: `pending` (the webhook has not landed; the polling copy), `paid` (the real thing), and the give-up state after ~30s — spec: "still confirming, check your receipt".
+
+- [ ] **Step 2: Stories — the full set spec:231 asks for**
+
+Home (full catalog, empty), Product (gallery, no photos, sold out, digital), Checkout (empty, BR filled, international filled, validation errors, submitting, out-of-stock error), Done (pending, paid). Any state on that list without a story is a gap to report, not to skip.
+
+These are the stories that make the Storybook a design review surface rather than a component catalogue — they are the deliverable, not a by-product.
+
+- [ ] **Step 3: One page-level interaction test**
+
+```tsx
+// STORY SKETCH — one story of the shipped file, as briefed. Not the file.
+export const AddingFromTheProductPageReportsTheSlug: Story = {
+  play: async ({ args, canvas, userEvent }) => {
+    await userEvent.click(canvas.getByRole('button', { name: /colocar na sacola/i }))
+    await expect(args.onAddToCart).toHaveBeenCalledWith(args.product.slug)
+  },
+}
+```
+
+- [ ] **Step 4: Verify and commit**
+
+Expect axe failures here that never appeared on primitives. Fix the markup, list what fired and what you changed.
+
+```bash
+git commit -m "feat(web): add the storefront pages"
+```
+
+---
+
+### Task 11: Containers
+
+**Files:** create `src/app/ShopShellContainer.tsx` and `src/app/routes/{Home,Product,About,Checkout,Done}Route.tsx`; test `apps/web/test/app/containers.test.tsx`.
+
+Containers are the only place with state, effects, IO and routing. They are thin: resolve data, hold state, pass props, handle intent.
+
+- [ ] **Step 1: `ShopShellContainer`**
+
+Owns `useCart`, `useLang`, and `drawerOpen`. Opens the drawer on add-to-cart and on the header's bag button. **This is where the drawer's Escape handler and focus management live** — the component cannot do it, and Task 5 recorded that. Render `<Outlet/>` for the child routes.
+
+- [ ] **Step 1b: Decide `selectedPhoto`'s clamping contract** (raised by Task 7, which owns the component but not the state)
+
+`ProductRoute` holds the selection and react-router keeps the component mounted across slug changes, so an index the new product has no photo for is reachable in normal use. `ProductGallery` degrades to the placeholder rather than throwing — but a stale index silently shows "no photo" over a product that has photos. Reset on product change, or clamp; decide, implement, and pin it with a test that navigates between two products with different photo counts.
+
+- [ ] **Step 1c: Restore Enter-to-submit on the checkout** (raised by Task 10)
+
+Task 10 established there is **no Enter-to-submit** on this checkout, and the reasoning is sound: the submit control lives in the other grid column inside `OrderSummaryPanel`, so a `<form>` wrapping the fields would contain no submit button, and HTML's implicit-submission rule needs one (or a single blocking field). With sixteen inputs, Enter does nothing today. That is a real usability defect on the highest-stakes screen in the shop, and it is not acceptable to ship it silently.
+
+**The fix is the HTML `form` attribute**, which associates a control with a form it is not nested in: `<form id="checkout" onSubmit={…}>` around the sections, and the panel's button rendering `form="checkout" type="submit"`. That needs one prop on `OrderSummaryPanel` (`submitFormId?: string`, defaulting to today's `type="button"` behaviour so its existing stories are unaffected). Implement it, and pin it with a test that presses Enter in a text field and asserts the submit handler fired — a story asserting the attribute exists would pass on a form id that matches nothing.
+
+- [ ] **Step 1d: Decide whether the checkout pre-fills `BR`** (raised by Task 10)
+
+`CheckoutPage/EmptyForm` renders with country `''`, so `shippingOptionsFor('')` returns `[]` and the empty-options branch shows. A shop that ships from Brazil and states "Envio para todo o Brasil" on its home page plausibly defaults the country. Decide, and note that pre-filling changes which validation errors a first-time submit produces.
+
+- [ ] **Step 2: `CheckoutRoute` — the one with real logic**
+
+Validates with `checkoutRequestSchema` + `checkoutRules` against the loaded catalogue, so the browser rejects exactly what the API would. Shipping options derive from `values.shippingAddress.country` via `shippingOptionsFor`. Totals come from `computeTotals` and are **display only**. The address and shipping sections are hidden entirely for a digital-only cart (`hasPhysicalItems` is false). On submit: POST, then `window.location.assign(url)`. On `OUT_OF_STOCK` / `UNKNOWN_ITEM`: remove the offending line and show the message, as v1 did.
+
+- [ ] **Step 3: `DoneRoute`**
+
+Reads `?order=` and `?session_id=`. Clears the cart the moment the order is found — not on mount, or a refresh with a failed lookup empties a valid cart. Polls while `pending` (the `useOrder` hook already does this), and after ~30s shows the "still confirming" state rather than polling forever.
+
+- [ ] **Step 4: Container tests — `fetch` stubbed at the boundary, everything else real**
+
+A real `QueryClient` (with `retry: false`), a real `MemoryRouter`, real hooks. `fetch` is the only fake. This is the layer where the wiring can be wrong in ways no story can catch.
+
+```tsx
+// apps/web/test/app/containers.test.tsx
+// ⚠️ INTERMEDIATE STATE — PLAN-TIME DRAFT, NOT THE SHIPPED FILE, and deliberately left as one.
+// The shipped file is 795 lines / 29 tests and this draft is 125, so it is not an excerpt of it
+// either: Task 11 replaced the harness wholesale because bare routes cannot open a drawer that
+// lives in the shell, and rendered the real route table under a real `ShopShellContainer`
+// instead — strictly more wiring under test, which narrowed two assertions below as a
+// consequence. Read the file for what runs; read this for what was asked for.
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { copyI18n } from '../../src/copy/i18n'
+import { digitalLetter, letter } from '../../src/fixtures/products'
+import { CheckoutRoute } from '../../src/app/routes/CheckoutRoute'
+import { DoneRoute } from '../../src/app/routes/DoneRoute'
+
+// `retry: false` matters: with the default the error-path tests wait through three retries and
+// time out instead of failing, which reads as a flake rather than a broken assertion.
+function renderAt(path: string, element: React.ReactElement, routePath: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={copyI18n}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes><Route path={routePath} element={element} /></Routes>
+        </MemoryRouter>
+      </I18nextProvider>
+    </QueryClientProvider>,
+  )
+}
+
+function stubFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
+  const spy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => handler(String(input), init))
+  vi.stubGlobal('fetch', spy)
+  return spy
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+beforeEach(() => localStorage.clear())
+afterEach(() => vi.unstubAllGlobals())
+
+describe('CheckoutRoute', () => {
+  it('hides the address and shipping sections for a digital-only cart', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([{ slug: digitalLetter.slug, qty: 1 }]))
+    stubFetch(() => json([digitalLetter]))
+    renderAt('/checkout', <CheckoutRoute />, '/checkout')
+
+    await screen.findByText(/quem está comprando/i)
+    // hasPhysicalItems is false, so checkoutRules asks for neither — showing them would collect
+    // an address the API will ignore and block a valid submit on fields it never required.
+    expect(screen.queryByText(/endereço de entrega/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/envio/i)).not.toBeInTheDocument()
+  })
+
+  it('lists PAC and SEDEX for BR and only the international option otherwise', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([{ slug: letter.slug, qty: 1 }]))
+    stubFetch(() => json([letter]))
+    renderAt('/checkout', <CheckoutRoute />, '/checkout')
+
+    await screen.findByLabelText(/país/i)
+    expect(await screen.findByRole('radio', { name: /pac/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /sedex/i })).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText(/país/i))
+    await userEvent.type(screen.getByLabelText(/país/i), 'FR')
+    await waitFor(() => expect(screen.queryByRole('radio', { name: /pac/i })).not.toBeInTheDocument())
+    expect(screen.getByRole('radio', { name: /internacional|international/i })).toBeInTheDocument()
+  })
+
+  it('does not POST when checkoutRules rejects the form', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([{ slug: letter.slug, qty: 1 }]))
+    const fetchSpy = stubFetch(() => json([letter]))
+    renderAt('/checkout', <CheckoutRoute />, '/checkout')
+
+    await userEvent.click(await screen.findByRole('button', { name: /pagar/i }))
+
+    expect(await screen.findByText(/obrigatório|required/i)).toBeInTheDocument()
+    // The assertion that matters: not "an error appeared" but "nothing was sent". A form that
+    // shows errors AND posts anyway creates a pending order per click.
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('removes only the offending line on OUT_OF_STOCK and keeps the rest', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([
+      { slug: letter.slug, qty: 1 },
+      { slug: digitalLetter.slug, qty: 1 },
+    ]))
+    stubFetch((url, init) => {
+      // ⚠️ The draft posited 409 with `fieldErrors: { slug: [...] }`. `routes/checkout.ts` throws
+      // 400 with NO fieldErrors — the slug appears only inside the message. Use the real shape;
+      // a test written against an invented envelope proves the container handles a response the
+      // API never sends.
+      if (init?.method === 'POST') {
+        return json({ error: { code: 'OUT_OF_STOCK', message: `Not enough stock for: ${letter.slug}` } }, 400)
+      }
+      return json({ products: [letter, digitalLetter] })
+    })
+    renderAt('/checkout', <CheckoutRoute />, '/checkout')
+
+    await screen.findByText(letter.name.pt)
+    // …fill the form and submit…
+
+    await waitFor(() => expect(screen.queryByText(letter.name.pt)).not.toBeInTheDocument())
+    expect(screen.getByText(digitalLetter.name.pt)).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('shop_cart')!)).toEqual([{ slug: digitalLetter.slug, qty: 1 }])
+  })
+})
+
+describe('DoneRoute', () => {
+  it('clears the cart only once the order lookup succeeds', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([{ slug: letter.slug, qty: 1 }]))
+    stubFetch(() => json({ error: { code: 'ORDER_NOT_FOUND', message: 'no' } }, 404))
+    renderAt('/thanks?order=413&session_id=cs_test', <DoneRoute />, '/thanks')
+
+    await screen.findByText(/não encontrei|not found|confirmando/i)
+    // Clearing on mount would empty a valid cart on any refresh whose lookup fails — a wrong
+    // session id in a shared link is enough.
+    expect(JSON.parse(localStorage.getItem('shop_cart')!)).toHaveLength(1)
+  })
+
+  it('clears the cart when the order is found', async () => {
+    localStorage.setItem('shop_cart', JSON.stringify([{ slug: letter.slug, qty: 1 }]))
+    stubFetch(() => json({ orderNumber: 413, status: 'paid', items: [], totalCents: 4500, currency: 'brl', shippingMethod: 'pac', eta: null }))
+    renderAt('/thanks?order=413&session_id=cs_test', <DoneRoute />, '/thanks')
+
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('shop_cart')!)).toEqual([]))
+  })
+})
+```
+
+The two `DoneRoute` tests are a pair on purpose: either alone passes for a broken implementation. "Does not clear on failure" passes for a container that never clears at all; "clears on success" passes for one that clears on mount. Only together do they pin the actual rule.
+
+**Added after Task 1.** `useOrder`'s two real decisions — `refetchInterval` stopping once the status leaves `pending`, and `enabled` gating on both halves of the credential — shipped in Task 1 with no coverage at all, because Task 1 only asked for a client test. That was a gap in this plan, not in the implementation. It is closed here, at the container, because the observable behaviour is what matters and because a hook test would need its own `QueryClient` harness to say the same thing:
+
+```tsx
+// EXCERPT — one test of `apps/web/test/app/containers.test.tsx`, as briefed. Not the file.
+it('stops polling once the order is no longer pending', async () => {
+  vi.useFakeTimers()
+  let status = 'pending'
+  const fetchSpy = stubFetch(() => json({ orderNumber: 413, status, items: [], totalCents: 4500, currency: 'brl', shippingMethod: 'pac', eta: null }))
+  renderAt('/thanks?order=413&session_id=cs_test', <DoneRoute />, '/thanks')
+
+  await vi.advanceTimersByTimeAsync(2100)
+  const whilePending = fetchSpy.mock.calls.length
+  expect(whilePending).toBeGreaterThan(1)
+
+  status = 'paid'
+  await vi.advanceTimersByTimeAsync(2100)
+  const afterPaid = fetchSpy.mock.calls.length
+
+  // The assertion is that it STOPS. Asserting only "it polled while pending" passes for a
+  // container that polls forever, which is the actual failure mode: a tab left open on the
+  // thank-you page hitting the API every two seconds until it is closed.
+  await vi.advanceTimersByTimeAsync(6000)
+  expect(fetchSpy.mock.calls.length).toBe(afterPaid)
+  vi.useRealTimers()
+})
+
+it('never calls the API without both the order number and the session id', async () => {
+  const fetchSpy = stubFetch(() => json({}))
+  renderAt('/thanks?order=413', <DoneRoute />, '/thanks')
+  await screen.findByText(/./)
+  // The session id is the order's password — spec: it is what stops order numbers being
+  // enumerated. A request fired without it is a request that cannot succeed and should not exist.
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+```
+
+- [ ] **Step 5: Prove, verify, commit**
+
+The `OUT_OF_STOCK` and cart-clearing tests are the two most likely to pass for the wrong reason — mutate the handler to clear the whole cart, and to clear on mount, and confirm each reddens.
+
+```bash
+git commit -m "feat(web): add the storefront containers"
+```
+
+---
+
+### Task 12: The switch — new entry points, wipe the v1 app, repair e2e
+
+Everything before this task was additive. This is the one commit where the v1 app stops existing and the v2 app takes over the two files they both want. Do it in the order below: write the replacements first, verify the app boots, and only then delete — so that at no point is the tree in a state where neither app works.
+
+**Files:**
+- Create: `apps/web/src/main.tsx` (replaces the v1 file of the same name), `apps/web/src/App.tsx` (same)
+- Delete: `apps/web/src/components/`, `apps/web/src/i18n/`, `apps/web/src/lib/`, `apps/web/src/pages/`
+- Delete: `apps/web/test/{admin-login,api,cart-page,cart,i18n,storefront,thanks}.test.{ts,tsx}`
+- Modify: `e2e/shop.spec.ts`
+- Modify: `apps/web/src/copy/pt.json` (resolve `Photo of {{name}}`)
+
+**Interfaces:**
+- Consumes: everything from Tasks 1–11.
+- Produces: a booting v2 app. Nothing later depends on its exports.
+
+> **This task deletes files. Before running any `rm`, confirm out loud: the branch is `feat/v2-web-storefront`, `git status` is clean apart from this task's own work, and the deletions match the list above exactly — no `src/ui`, no `src/copy`, no `src/fixtures`, and none of the six surviving test files.** The list is not a suggestion; PR 2's output lives in the same directory and a wildcard takes it with the rest.
+
+- [ ] **Step 0: Add the loading and error screens the design never drew** (raised by Task 11)
+
+There is no loading state and no error state anywhere in this app. `HomeRoute` renders nothing while the first fetch is in flight and falls back to the catalogue's EMPTY state on failure — **a shop that is down and a shop with nothing to sell look identical**. `ProductRoute` renders a blank page for a mistyped slug. Neither the design nor the spec has copy for either, and Task 11 correctly refused to invent it in a container: `src/app` is not scanned by `copy.test.ts`, so a sentence written there ships as fluent English to a Portuguese reader.
+
+Add the states to the pages in `src/ui/pages/` (where the copy scanner can see them), give each a story, and wire the containers. A not-found product needs a real screen, not an empty one.
+
+- [ ] **Step 1: Write the new entry points**
+
+```tsx
+// apps/web/src/main.tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { I18nextProvider } from 'react-i18next'
+import { BrowserRouter } from 'react-router'
+import App from './App'
+import { retryQuery } from './app/api/client'
+import { copyI18n } from './copy/i18n'
+import './index.css'
+
+/**
+ * `retryQuery` rather than react-query's default, and it is the difference between a mistyped
+ * `/exhibit/:slug` showing the not-found screen at once and showing it after about seven seconds of
+ * backoff spent re-asking a question the API has already answered. See the note on the predicate.
+ */
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryQuery } } })
+
+/**
+ * The copy instance is provided rather than installed as react-i18next's default: `src/copy/i18n.ts`
+ * deliberately skips `initReactI18next`, so a bare `useTranslation()` only reaches it through this
+ * provider. `useLang` drives whichever instance its tree was given, which is what lets Storybook
+ * hand each story a different one.
+ */
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <I18nextProvider i18n={copyI18n}>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </I18nextProvider>
+    </QueryClientProvider>
+  </StrictMode>,
+)
+```
+
+```tsx
+// apps/web/src/App.tsx
+import { Navigate, Route, Routes } from 'react-router'
+import { LinkInterceptor } from './app/LinkInterceptor'
+import { ShopShellContainer } from './app/ShopShellContainer'
+import { AboutRoute } from './app/routes/AboutRoute'
+import { CheckoutRoute } from './app/routes/CheckoutRoute'
+import { DoneRoute } from './app/routes/DoneRoute'
+import { HomeRoute } from './app/routes/HomeRoute'
+import { ProductRoute } from './app/routes/ProductRoute'
+
+/**
+ * SHOP ROUTES ONLY. The admin is rebuilt in PR 4 and its routes arrive with it; until then `/admin*`
+ * falls into the catch-all below. That is safe because these PRs merge into `docs/v2-design` and not
+ * into `main` — production keeps serving v1 until PR 5 lands. `ui/routes.ts` keeps its admin href
+ * builders: they are strings, nothing in the shop renders them (the design drops the Admin nav item
+ * entirely), and PR 4 consumes them.
+ *
+ * `LinkInterceptor` wraps the route table rather than sitting inside it, because it has to see
+ * clicks on the shell's own chrome — the header's `Sobre`, the drawer's `Ir para o pagamento` —
+ * which are rendered by `ShopShellContainer` around the `<Outlet/>` and not by any route.
+ *
+ * The catch-all REDIRECTS to the catalogue rather than rendering a not-found screen, and the two are
+ * deliberately different answers: `NoticePage` exists for a piece the catalogue could not give us,
+ * which is a real address with nothing behind it, while an unrouted path is not an address this app
+ * has ever had. The one exception is `/admin`, which IS such an address today — and it is a
+ * temporary one, tracked by the skipped e2e test rather than by a screen that would have to be
+ * deleted again in PR 4.
+ */
+export default function App() {
+  return (
+    <LinkInterceptor>
+      <Routes>
+        <Route element={<ShopShellContainer />}>
+          <Route path="/" element={<HomeRoute />} />
+          <Route path="/exhibit/:slug" element={<ProductRoute />} />
+          <Route path="/about" element={<AboutRoute />} />
+          <Route path="/checkout" element={<CheckoutRoute />} />
+          <Route path="/thanks" element={<DoneRoute />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </LinkInterceptor>
+  )
+}
+```
+
+- [ ] **Step 2: Boot it before deleting anything**
+
+Run: `cd apps/web && npm run dev` and open `http://localhost:5173`. Walk: home → a product → add to bag → drawer → checkout → back. Confirm the language toggle switches copy and survives a reload.
+
+This is the only manual step in the plan, and it is here on purpose: the deletion below is irreversible within the commit, and a container wired to the wrong prop typechecks fine. Report what you saw. Stop the dev server before continuing.
+
+- [ ] **Step 3: Delete the v1 app**
+
+```bash
+cd /Users/augustopereira/dev/handmade-portfolio
+git rm -r apps/web/src/components apps/web/src/i18n apps/web/src/lib apps/web/src/pages
+git rm apps/web/test/admin-login.test.tsx apps/web/test/api.test.ts apps/web/test/cart-page.test.tsx \
+       apps/web/test/cart.test.tsx apps/web/test/i18n.test.ts apps/web/test/storefront.test.tsx \
+       apps/web/test/thanks.test.tsx
+```
+
+`git rm` rather than `rm`: it stages the deletion and refuses if the file has uncommitted changes, which is exactly the guard wanted here.
+
+- [ ] **Step 4: Confirm nothing still points at the deleted code**
+
+```bash
+grep -rn "from '\./lib/\|from '\.\./lib/\|src/lib\|src/pages\|src/components\|from '\./i18n'\|i18next-browser-languagedetector" apps/web/src apps/web/test e2e || echo "no dangling references"
+```
+
+Expected: `no dangling references`. If `i18next-browser-languagedetector` is now unused, remove it from `apps/web/package.json` in this commit — the v2 language detection is `useLang`, and a dependency nothing imports is a dependency nobody audits.
+
+- [ ] **Step 5: Resolve the dead copy key**
+
+**RESOLVED IN TASK 6, AND THIS STEP CONTRADICTED THE GLOBAL CONSTRAINT UNTIL THE SWEEP CORRECTED IT.** The key is NOT dead: Task 6 gave it a designed use as `Hero`'s alt fallback when the photo carries none, and Task 7 made the same call for the gallery's main photo. Both call sites are shipped (`shop/Hero.tsx`, `shop/ProductGallery.tsx`). **Keep the key.** The instruction that stood here — "otherwise delete the key from `pt.json`" — was written before that decision and survived eleven amendments beside a constraint that says the opposite.
+
+- [ ] **Step 6: Rewrite the e2e suite for the v2 flow**
+
+```ts
+// e2e/shop.spec.ts
+import { expect, test } from '@playwright/test'
+
+// The shop picks its language from `navigator.language` when nothing is stored, so the copy every
+// selector below matches is a property of the BROWSER rather than of the app. Pinned here: left to
+// the default, this file passes on a machine whose Chromium reports en-US and fails on one that
+// reports pt-BR, and neither result would be about the code.
+test.use({ locale: 'pt-BR' })
+
+// The seed (`apps/api/src/seed.ts`) is four active products, `handwritten-letter` first and the only
+// one flagged featured, at R$ 50,00, physical, `stock: null` — made to order. None of them has a
+// photo, so every image slot renders the "ainda sem foto" placeholder and the catalogue link's
+// accessible name is that placeholder plus the name, subtitle, price and availability. Matching a
+// substring of it with a regex is what keeps this test from re-encoding the whole card.
+test('catalogue → product → bag drawer shows the line and the totals', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('link', { name: /carta escrita à mão/i }).click()
+  await expect(page).toHaveURL(/\/exhibit\/handwritten-letter$/)
+  // The piece really is on screen before anything is added to the bag: `ProductPage` is the only
+  // screen with the name as its `<h1>`, so this separates a real product page from the loading
+  // screen and from the not-found screen, both of which would also answer a click.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Exhibit 001 — Carta escrita à mão')
+
+  await page.getByRole('button', { name: /colocar na sacola/i }).click()
+
+  // Named, not just present: the drawer is the shop's only dialog and `aria-labelledby` is what
+  // makes it announce as the bag rather than as an unlabelled modal.
+  const drawer = page.getByRole('dialog', { name: 'Sua sacola' })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByText('Exhibit 001 — Carta escrita à mão')).toBeVisible()
+
+  // The totals `<dl>`, read as a block. `\s` covers the NO-BREAK SPACE `Intl` puts between `R$` and
+  // the digits — a plain space in the pattern matches nothing at all here.
+  const totals = drawer.locator('dl')
+  await expect(totals).toContainText('Subtotal')
+  await expect(totals).toContainText(/R\$\s*50,00/)
+  await expect(totals).toContainText('Total')
+  // Frete is unresolved for a physical bag until the checkout asks for an address, and the dash the
+  // design draws for it is `aria-hidden`, so the sentence behind it is the assertion.
+  await expect(totals).toContainText('Calculado no pagamento')
+
+  // The bag's one internal destination, and the last hop of the walk. It is here because the whole
+  // suite could not see it anywhere else: the checkout's unit tests render `/checkout` directly,
+  // which is a bag that was closed to begin with, and this link is only a client-side navigation at
+  // all because `LinkInterceptor` is mounted — which is what this task turned on.
+  await drawer.getByRole('link', { name: 'Ir para o pagamento' }).click()
+  await expect(page).toHaveURL(/\/checkout$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Para onde eu mando, e para quem.')
+  await expect(drawer).toBeHidden()
+})
+
+// The state that used to be a blank page, and the reason `NoticePage` exists. It is here rather
+// than only in the unit suite because the delay is the interesting half: react-query's default
+// would spend three backoffs re-asking a 404 before this screen appeared, and only a real browser
+// against a real API runs that code path.
+test('an address with no piece behind it gets a screen, not a blank page', async ({ page }) => {
+  await page.goto('/exhibit/nao-existe')
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Essa peça não está no catálogo.')
+  await expect(page.getByRole('link', { name: 'Ver o catálogo' })).toHaveAttribute('href', '/')
+})
+
+test('admin logs in and sees seeded products', async ({ page }) => {
+  // PR 3 deletes the v1 admin and registers shop routes only, so `/admin` falls into the catch-all.
+  // Skipped rather than deleted: a skipped test with a reason is a tracked commitment.
+  test.skip(true, 'the admin app is deleted in PR 3 and rebuilt in PR 4')
+  await page.goto('/admin')
+})
+
+test('checkout reaches Stripe', async ({ page }) => {
+  test.skip(true, 'v1 web checkout is incompatible with the v2 API; re-enabled in PR 5')
+  await page.goto('/')
+})
+```
+
+The first test's selectors come from the real fixtures the seed loads — if the seeded catalogue's first product is not the handwritten letter, use whatever it actually is rather than changing the seed to fit the test.
+
+- [ ] **Step 7: Run everything**
+
+```bash
+cd /Users/augustopereira/dev/handmade-portfolio
+npm run typecheck
+NODE_OPTIONS=--max-old-space-size=4096 npm test
+NODE_OPTIONS=--max-old-space-size=4096 npm run build
+NODE_OPTIONS=--max-old-space-size=4096 npm run build-storybook -w @shop/web
+npm run e2e
+ps ax -o pid,ppid,command | grep -i vitest | grep -v grep
+```
+
+Expected: typecheck clean in three workspaces; every vitest project green; both builds clean; e2e 1 passed / 2 skipped; no orphaned workers.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A apps/web/src apps/web/test e2e apps/web/package.json
+git commit -m "feat(web): switch the app over to the v2 storefront and delete v1"
+```
+
+---
+
+### Task 13: Autodocs decision and the branch sweep
+
+**Files:**
+- Modify: `apps/web/.storybook/main.ts` (only if autodocs is turned on)
+- Modify: `docs/superpowers/specs/2026-09-07-webshop-v2-design.md` (record whichever way it goes)
+
+- [ ] **Step 1: Decide autodocs**
+
+spec:229 says autodocs is specified but was never enabled — PR 2's built index carries story entries and zero docs entries, and the spec says to "turn it on in PR 3 or drop the requirement deliberately". Decide now with the full component set in hand: `tags: ['autodocs']` in `.storybook/main.ts` generates a docs page per component from its props and stories.
+
+Enable it only if the generated pages are actually useful for these components; if they are not, amend the spec to drop the requirement and say why. Either way the spec stops carrying an unmet claim. **Do not leave this open a third time.**
+
+- [ ] **Step 2: Sweep the branch for the failure modes PR 2 paid for**
+
+Check each, and report findings rather than a clean bill of health:
+
+1. **Unfailable assertions.** Every `expect` added on this branch: can you name the mutation that reddens it? For any you cannot, mutate and find out. Delete the ones that survive everything.
+2. **Assertions that pass for the wrong reason.** Chiefly: a story asserting on text that the component renders unconditionally, and a contrast assertion comparing two file-local constants rather than a measured value.
+3. **`Stat` has zero consumers and this branch is why.** PR 2 shipped it for the About facts band — its own story's args are literally `value: '4', label: 'peças no catálogo'` — but it renders two `<div>`s in flow order and the band needs a `<dt>`/`<dd>` pair in reverse order. Task 8 re-implemented the cell locally rather than give a primitive an emit-a-`<dd>` mode valid only inside a `<dl>` that flips its own DOM order. Either give `Stat` the `<dl>` semantics and have `AboutFacts` consume it, or delete it. Do not leave a primitive on the branch that nothing renders.
+4. **`t()` calls with no `pt.json` entry**, and `pt.json` entries nothing calls. The copy test catches the first; the second needs `grep`. Report unused keys — some are legitimately planted for PR 4, and those should be named as such rather than silently kept.
+4. **Components that took local state** to make a story work. The purity test catches hooks by name; it does not catch a component that asks its parent for state it should not need.
+5. **Story coverage against spec:231** — Home (full catalog, empty), Product (gallery, no photos, sold out, digital), Checkout (empty, BR filled, international filled, validation errors, submitting, out-of-stock error), Done (pending, paid). Name any listed state with no story.
+
+- [ ] **Step 3: Regenerate the plan's code blocks from the shipped files**
+
+Every code block in this plan that claims to be a file's contents must match that file as shipped, or be explicitly marked as an intermediate state. PR 2 shipped twelve stale blocks because prose was amended and the block underneath it was not; the fix is to generate the blocks from the files rather than edit them by hand.
+
+- [ ] **Step 4: Final verification and commit**
+
+Run the full Task 12 Step 7 battery once more, then:
+
+```bash
+git add -A
+git commit -m "docs: record the autodocs decision and resync the plan with the shipped files"
+```
+
+---
+
+## Task 13 outcome
+
+**Autodocs: DROPPED deliberately, by measurement.** Written up in full at spec:229. Short form: Storybook 10's `DocsOptions` has no `autodocs` key, so **this task's own Files list names the wrong file** — `main.ts` cannot enable it. It needs `@storybook/addon-docs` as a new devDependency (not installed) plus `tags: ['autodocs']` **inside** the `preview` object, and a named `export const tags` beside a default export is silently ignored, which measures as 0 docs entries and looks like a clean result. Installed and measured anyway: 166 story + 44 docs entries, suite unchanged at 54 files / 565 tests — docs entries reach neither the vitest addon nor the a11y gate, so all 44 pages would ship unpoliced on a branch whose thesis is that every rendered surface has a gate over it. Reverted; nothing of the probe is on the branch.
+
+**`Stat`: DELETED** (`3fd6a0b`), with its story and its barrel line. No production consumer, and no designed one — PR 4's admin is a login, a table, a form and an order list, with no facts band. The third option nobody had considered is recorded in `AboutFacts`: a self-contained `<dl>` per cell would have been valid and parent-independent, but it fragments one band of four facts into four one-item lists, which is worse to hear read out than two duplicated class strings are to maintain.
+
+**`PLANNED_FOR_PR3`: REMOVED** (`4fa6a1a`). All seven keys have real callers, verified one by one. Proved the remaining check still bites, both ways: an invented orphan key reddens it, and so does orphaning `Photo of {{name}}` by deleting its two call sites — the exact case the whitelist would have hidden.
+
+**zod→`fieldErrors`: MOVED to `@shop/shared`** (`ca1cd1b`). It was **three** copies, not two: the express handler, the checkout container, and — the dangerous one — the fixture that derives `buyerCheckoutErrors`, which every error story on the branch renders. One mutation in the single shared copy now reddens the API suite, the fixture test, two stories and a container test together; before, breaking any one copy left the other two green.
+
+### Sweep findings NOT fixed here — all measured, none guessed
+
+1. **`CART_MAX_QTY` and `CART_MAX_DISTINCT` are both `5`, and are therefore interchangeable everywhere.** Measured, not argued: swapping them inside `useCart.ts` (lines 44/45/54) survives all 564 tests, and making `CartLine` read the wrong one survives too. Eight assertions name these constants and not one can tell them apart. **Not fixed here because the one-line fix changes a customer-visible limit** — how many of one piece may be bought versus how many different pieces — plus the `Maximum {{max}} per item.` copy. Augusto's call.
+2. **The drawer's `Total` row is definitionally its `Subtotal`.** `ShopShellContainer` calls `computeTotals(lines, null)`, so `totalCents === itemsCents` always. No assertion can ever separate them there. Worth a comment on the line before someone writes a false-confidence test.
+3. **`shippingAddress.number` and `shippingAddress.district` both fail as `required`**, so swapping the two lookups in `CheckoutAddressSection` is undetectable — both fields still render their own paragraph with the same sentence. Structural; closing it needs each field's `aria-errormessage` asserted against its own sibling.
+4. **The e2e drawer totals read one `<dl>` with `toContainText`** while the seeded cart holds one item at qty 1, so unit, line, subtotal and total are all `R$ 50,00`. Swapping `itemsCents`/`totalCents` or `unitCents`/`lineCents` in the container survives, and so does deleting the Total row's price.
+5. **`product.subtitle[lang]` is asserted once, in Portuguese only.** Four call sites read it; changing any of them to `.pt` survives. `drawing.subtitle.pt === .en`, so an English story built on that fixture would not catch it either — it has to be `letter`.
+6. **Props that exist only for a story, or that the parent can get wrong silently:** `CheckoutPage.shippingMethodName` is derivable from `shippingOptions` + `shippingMethod` + `lang` (the `needsShipping` shape again); `CartDrawer.shippingCents` is always `null` in the app while its stories feed `2200`; `HomePage.featured` is derivable from `products`; `OrderSummaryPanel.onSubmit` is permanently `undefined` in production because the container always passes `submitFormId`. `AboutPage.portrait` is unpassed too, but that one is spec:219's placeholder and is planted, not dead.
+7. **Dead props with no supplier anywhere:** `ImageFrame.placeholder`, `PillButton.className` (which the component's own doc comment argues against accepting), `RuledList.className`, `RuledRow.className`, `TextArea.rows`, `CheckoutField.placeholder` (dead all the way down into `TextInput.placeholder`). **`RuledRow` is exported and rendered by nothing but its own story** — the same shape as `Stat`, left standing only because `RuledList` is live and the two read as a pair.
+8. **Planted for PR 4, named as such rather than kept quietly:** `Select`, `StatusPill`, `STATUS_LABELS`, the five `admin*` route builders, `shippedOrder` / `oversoldOrder` / `expiredOrder` / `adminOrders`, `inactiveGuide`, `ADMIN_ORDER_TRANSITIONS`, `ParsedProductInput`, `ProductUpdateInput`. **Warning for PR 4:** `paidOrder`, `shippedOrder` and `oversoldOrder` are money-identical and `expiredOrder` equals `pendingOrder`, so the first admin-table story to assert a money cell will not be able to prove it read that row. Give them their own amounts first.
+9. **`ShopShell.stories.tsx`'s decorator sets `cartCount: 2` over lines totalling 3 units**, encoding the exact rule `containers.test.tsx` forbids. Nothing reads it today; the first page story that asserts the bag button's name inherits the wrong number.
+10. **Story coverage against spec:231 is complete** — all fourteen listed shop states have a story, plus eight the spec does not list. The `OutOfStock` story really does drive `submitError: 'OUT_OF_STOCK'` and assert its own sentence, not a generic submit error. `t()` calls with no `pt.json` entry: **zero**. `pt.json` keys nothing accounts for: **zero** (145 keys = 140 literal call sites + 5 `STATUS_LABELS`). No copy in `src/app`, where the scanner could not see it.
+
+---
+
+## Self-review notes (author, at plan time)
+
+- **Spec coverage:** every screen in "Scope by screen" that belongs to the shop maps to a task (header/drawer → 5, Home → 6, Product → 7, About → 8, Checkout → 9, Done → 10). The five admin rows are PR 4 and are deliberately absent. "Forms and UI state" maps to Tasks 9 and 11; "Navigation" to Task 4; "i18n" to Task 3 plus the per-task `pt.json` rule.
+- **Known gap, deliberate:** the spec's `useCart` limits are enforced in the hook but the DRAWER can still show a quantity stepper at the cap with no explanation. Task 5 must decide whether hitting `CART_MAX_QTY` is silent or explained, and say which.
+- **Risk carried into Task 5:** `CartDrawer` is a modal-ish surface and the purity rule forbids `useRef`/`useEffect`, so it cannot trap focus or close on Escape by itself. Both belong in `ShopShellContainer`. axe does not test focus trapping, so this will not fail a gate — it will simply be missing unless the container does it. Task 11 owns it.

@@ -116,22 +116,6 @@ const dynamic = sources.filter(({ source }) => DYNAMIC_CALL.test(source)).map(({
 
 const ptKeys = Object.keys(pt as Record<string, string>)
 
-// Keys pt.json already carries for the components PR 3 brings. The scan cannot find a caller yet
-// and that is expected, not a defect — so the assertion below is a SUBSET check: it stays green as
-// PR 3 wires each one up, and goes red the day a key arrives that nothing accounts for.
-const PLANNED_FOR_PR3 = [
-  'Add to bag', // ProductPage, ProductCard
-  'Your bag is empty.', // CartDrawer
-  'Ship to: Brazil', // CheckoutShippingSection
-  '{{count}} in stock', // ProductPage stock line
-  'Made to order', // ProductCard badge
-  'Sold out', // ProductCard badge
-  // Suspected DEAD rather than planned: ImageFrame takes `alt` as a prop and builds no alt text of
-  // its own, so as designed nothing is left to call this. It stays because pt.json is outside this
-  // wave's scope; PR 3 either has ImageFrame build its own alt from the product name or deletes it.
-  'Photo of {{name}}',
-]
-
 describe('copy completeness', () => {
   it('finds ui files and t() calls to check', () => {
     // Without this the whole suite below is vacuously green when the glob or the regex breaks.
@@ -157,7 +141,15 @@ describe('copy completeness', () => {
   })
 
   it('carries no key in pt.json that nothing accounts for', () => {
-    const reachable = new Set([...used.map((u) => u.key), ...Object.values(STATUS_LABELS), ...PLANNED_FOR_PR3])
+    // This was a SUBSET check until PR 3 finished: PR 2 planted seven keys for components that did
+    // not exist yet, and a whitelist kept them from reading as orphans while they waited. All seven
+    // now have real call sites — `Add to bag` in ProductPage, `Your bag is empty.` in CartDrawer and
+    // OrderSummaryPanel, `Ship to: Brazil` in CheckoutShippingSection, the three availability labels
+    // in shop/availability.ts, `Photo of {{name}}` in Hero and ProductGallery — so the whitelist
+    // stopped protecting anything and started HIDING: every name on it was a key the scan was told
+    // to forgive forever, including one whose comment still credited a caller (`ProductCard`) that
+    // was never written. An exemption that outlives its reason is indistinguishable from a bug.
+    const reachable = new Set([...used.map((u) => u.key), ...Object.values(STATUS_LABELS)])
     expect(ptKeys.filter((key) => !reachable.has(key))).toEqual([])
   })
 })

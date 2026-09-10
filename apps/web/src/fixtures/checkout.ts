@@ -1,4 +1,11 @@
-import { type CheckoutRequest, type FieldErrors, type TotalsLine, checkoutRequestSchema, checkoutRules } from '@shop/shared'
+import {
+  type CheckoutRequest,
+  type FieldErrors,
+  type TotalsLine,
+  checkoutRequestSchema,
+  checkoutRules,
+  fieldErrorsFromIssues,
+} from '@shop/shared'
 import { deepFreeze } from './freeze'
 import { drawing, letter } from './products'
 
@@ -90,21 +97,17 @@ if (!derivedBrCheckoutErrors) {
  */
 export const brCheckoutErrors: FieldErrors = deepFreeze(derivedBrCheckoutErrors)
 
-// The OTHER shape the page can receive, derived the same way rather than hand-written.
-// `apps/api/src/errors.ts:26-33` turns a ZodError into `fieldErrors` keyed by
-// `issue.path.join('.')` — the SAME response field and the SAME key shape as the rules produce,
-// so `{ 'buyer.name': [...] }` is a payload the checkout page really does get. What never happens
-// is the two arriving MIXED: the parse at `routes/checkout.ts:21` runs before the rules at :36,
+// The OTHER shape the page can receive, derived the same way rather than hand-written. It runs the
+// SAME `fieldErrorsFromIssues` the express handler runs, rather than a transcription of it: this
+// object is what every error story on the branch renders, so a private copy that drifted would
+// leave the stories agreeing with each other and with nothing the API sends. What never happens is
+// the two kinds arriving MIXED: the parse at `routes/checkout.ts:21` runs before the rules at :36,
 // so a request with a bad buyer is rejected before `checkoutRules` is ever called.
 const buyerParse = checkoutRequestSchema.safeParse(emptyCheckout)
 if (buyerParse.success) {
   throw new Error('emptyCheckout must fail the schema: buyerCheckoutErrors is derived from its issues')
 }
-const zodFieldErrors: FieldErrors = {}
-for (const issue of buyerParse.error.issues) {
-  const key = issue.path.length ? issue.path.join('.') : '_'
-  ;(zodFieldErrors[key] ??= []).push(issue.message)
-}
+const zodFieldErrors: FieldErrors = fieldErrorsFromIssues(buyerParse.error.issues)
 
 /**
  * NOTE for the checkout UI: the values here are raw English prose straight from zod ("String must

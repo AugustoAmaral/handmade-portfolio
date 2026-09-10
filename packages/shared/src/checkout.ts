@@ -54,6 +54,33 @@ export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>
 
 export type FieldErrors = Record<string, string[]>
 
+/**
+ * The one place a rejected parse becomes `fieldErrors`: keyed by `issue.path.join('.')`, with `_`
+ * for an issue that has no path (a whole-object refinement such as `duplicate_items`).
+ *
+ * It lives here, beside the schema it decodes and beside `checkoutRules`, because the API and the
+ * browser BOTH run `checkoutRequestSchema` over the same request and both have to land the result
+ * on the same field names. It had drifted into three copies before this was written — the express
+ * error handler, the checkout container, and the fixture that derives `buyerCheckoutErrors`. The
+ * fixture copy was the dangerous one: every error story on the branch renders that object, so a
+ * copy that drifted from the API's would have made the stories agree with each other and with
+ * nothing else.
+ *
+ * The parameter is STRUCTURAL rather than `ZodIssue`, so a caller holding a different zod instance
+ * still type-checks. Two copies of zod hoisted side by side is the usual way a shared helper
+ * quietly stops accepting the errors it exists to convert.
+ */
+export function fieldErrorsFromIssues(
+  issues: readonly { path: readonly (string | number)[]; message: string }[],
+): FieldErrors {
+  const errors: FieldErrors = {}
+  for (const issue of issues) {
+    const key = issue.path.length > 0 ? issue.path.join('.') : '_'
+    ;(errors[key] ??= []).push(issue.message)
+  }
+  return errors
+}
+
 const BR_POSTAL_CODE = /^\d{5}-?\d{3}$/
 const BR_STATE = /^[A-Za-z]{2}$/
 

@@ -16,6 +16,23 @@ export const Solid: Story = {
 
 export const Outline: Story = { args: { children: 'Cancelar', variant: 'outline' } }
 
+// The `block` size exists because a full-width CTA cannot be spelled at the call site: `px-0` and
+// `px-7` carry the same specificity, so which one wins is decided by the order Tailwind emitted
+// them in and not by the class attribute. Measured against its container, because a `w-full` that
+// compiles to nothing leaves the pill at its intrinsic width and nothing else in the suite looks.
+export const Block: Story = {
+  args: { children: 'Ir para o pagamento', size: 'block' },
+  render: (args) => (
+    <div className="w-[420px]">
+      <PillButton {...args} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    const button = canvas.getByRole('button', { name: 'Ir para o pagamento' })
+    await expect(button.getBoundingClientRect().width).toBe(420)
+  },
+}
+
 export const AsLink: Story = {
   args: { children: 'Ver o catálogo', href: '/' },
   play: async ({ canvas }) => {
