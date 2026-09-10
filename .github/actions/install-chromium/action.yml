@@ -1,0 +1,27 @@
+name: Install Chromium
+description: Installs Playwright's Chromium, retrying past transient apt mirror failures.
+
+# `playwright install --with-deps` runs `apt-get update` as root over EVERY source configured on
+# the runner image — including third-party repos this project neither needs nor controls, because
+# ubuntu-latest ships Google Chrome and its apt source preinstalled. Any one of them being
+# mid-CDN-propagation is enough to fail the step, and with it both jobs, before a single test runs.
+#
+# That is not hypothetical: on 2026-09-09 Google served a `Release` newer than the `Packages.gz`
+# behind it, apt refused the hash mismatch and exited 100. Both jobs went red in 25s having
+# executed no code of ours; the identical re-run minutes later was green.
+#
+# Retrying is deliberately the narrow fix. Dropping `--with-deps` would remove the apt call
+# altogether and ubuntu-latest probably does ship every library Chromium needs — but "probably",
+# discovered in CI, trades a known transient for an unknown one. Backoff is 20s then 40s: long
+# enough to outlast a CDN propagating, short enough that a genuine failure still fails fast.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          if npx playwright install --with-deps chromium; then exit 0; fi
+          echo "::warning::playwright install failed (attempt $attempt/3)"
+          [ "$attempt" = 3 ] || sleep $((attempt * 20))
+        done
+        exit 1

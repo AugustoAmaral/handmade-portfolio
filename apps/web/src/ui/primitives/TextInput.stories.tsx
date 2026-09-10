@@ -1,0 +1,144 @@
+import { type ComponentProps, useState } from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, fn, userEvent } from 'storybook/test'
+import { FieldLabel } from './FieldLabel'
+import { TextInput } from './TextInput'
+import { contrast, parseColor, surfaceBehind } from '../../../.storybook/contrast'
+
+const LABEL = 'E-mail'
+
+const meta = {
+  component: TextInput,
+  title: 'Primitives/TextInput',
+  // `onChange` is required on the component, so it MUST be declared here: `StoryObj<typeof meta>`
+  // only makes an arg optional once meta supplies a default, and without it every story owes an
+  // `onChange` it never passes.
+  args: { id: 'email', value: '', onChange: fn() },
+  // Local state, NOT `useArgs`: under the vitest storybook project there is no manager to service
+  // the UPDATE_STORY_ARGS message, so `updateArgs` never re-renders and a controlled input stays
+  // frozen at its initial value — the typing assertion below silently tested nothing.
+  //
+  // The render parameter is annotated rather than inferred because the base tsconfig sets
+  // `declaration: true`: tsc must be able to NAME this type, and `Props` is not exported (TS4023).
+  //
+  // The FieldLabel is part of the story because it is part of the contract — TextInput does not
+  // name itself, and an unlabelled field fails axe's `label` rule.
+  render: function Render(args: ComponentProps<typeof TextInput>) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <TextInput
+          {...args}
+          value={value}
+          onChange={(v) => {
+            setValue(v)
+            args.onChange(v)
+          }}
+        />
+      </div>
+    )
+  },
+} satisfies Meta<typeof TextInput>
+export default meta
+type Story = StoryObj<typeof meta>
+
+export const Empty: Story = {
+  args: { placeholder: 'E-mail' },
+  play: async ({ canvas }) => {
+    const input = canvas.getByPlaceholderText('E-mail')
+    await userEvent.type(input, 'marina@example.com')
+    await expect(input).toHaveValue('marina@example.com')
+  },
+}
+
+/**
+ * `label` GIVES THE FIELD A NAME OF ITS OWN, and it arrived in PR 4 with no story — `PhotosEditor`
+ * is its only caller, where nine boxes share three visible labels and each needs a name that says
+ * WHICH photo it belongs to (`Alt (PT), Foto 2`). The visible `<label>` stays: it is what a sighted
+ * reader reads and what the click target is.
+ *
+ * TWO NAMES, TWO COMPUTATIONS, AND THEY DISAGREE ON PURPOSE — which is exactly the trap the shared
+ * constraints record. `getByLabelText` reads the `<label>`'s raw `textContent`, so it still finds
+ * the field by the visible word; `toHaveAccessibleName` goes through dom-accessibility-api, where
+ * `aria-label` wins outright. Asserting only one of them would leave the other free to be wrong.
+ */
+export const NamedForItsRow: Story = {
+  args: { label: 'Alt (PT), Foto 2' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleName('Alt (PT), Foto 2')
+    // And without the prop the visible label is the whole name, so the assertion above is about
+    // `label` rather than about the markup around it.
+    await expect(canvas.getByLabelText(LABEL)).not.toHaveAccessibleName(LABEL)
+  },
+}
+
+export const WithError: Story = {
+  args: { value: 'nope', error: 'E-mail inválido' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('E-mail inválido')).toBeInTheDocument()
+  },
+}
+
+// The error is only useful if a screen reader reaches it. `toHaveAccessibleErrorMessage` resolves
+// aria-errormessage the way an AT would, so this fails if the id wiring or the announcement
+// technique regresses — neither of which the visual assertion above would notice.
+export const ErrorIsAnnounced: Story = {
+  args: { value: 'nope', error: 'E-mail inválido' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleErrorMessage('E-mail inválido')
+  },
+}
+
+// The assertion below has to be about a NUMBER: "an outline exists" would happily pass the 1px
+// hue-only signal this story was written to keep out, and axe ships no rule for focus appearance,
+// so nothing else in the suite is watching.
+//
+// The surface is MEASURED rather than assumed. The control is `bg-transparent` and so is its
+// wrapper, so the first opaque background up the tree is what a user actually sees behind the
+// outline; with a file-local literal on both sides the assertion was arithmetic over two constants
+// two lines after `outlineColor` had already been pinned to one of them.
+
+// The arithmetic lives in `.storybook/contrast.ts`, shared by every story on the branch that has
+// to assert a ratio for itself. It was six copies until PR 4 Task 3, and by then they had
+// diverged; the note at the top of that file records what the divergence was and what it cost.
+
+// The regression this exists to catch: the first implementation styled focus as
+// `outline-none focus:border-accent`, which left `outline-style: none` and moved only the 1px
+// border — 2.81:1 between states, under the 3:1 WCAG 2.2 asks for, and hue-only. Asserting the
+// outline is really painted AND that its colour clears 3:1 against the background MEASURED behind
+// it fails the moment either half is walked back, including by re-adding `outline-none` (Tailwind
+// 4 turns that into `--tw-outline-style: none`, which the width utility then resolves to).
+export const FocusRing: Story = {
+  args: { placeholder: 'E-mail' },
+  play: async ({ canvas }) => {
+    const input = canvas.getByPlaceholderText('E-mail')
+
+    input.blur()
+    const unfocused = getComputedStyle(input).outlineStyle
+    await expect(unfocused).toBe('none')
+
+    input.focus()
+    const focused = getComputedStyle(input)
+    const { outlineStyle, outlineWidth, outlineColor, outlineOffset } = focused
+
+    await expect(input).toHaveFocus()
+    await expect(outlineStyle).not.toBe('none')
+    await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
+    await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
+    await expect(contrast(parseColor(outlineColor), surfaceBehind(input))).toBeGreaterThanOrEqual(3)
+  },
+}
+
+// `disabled` used to be a prop that lied: the component accepted it, `FIELD` styled nothing for
+// it, and no story rendered the combination — so a disabled field was pixel-identical to an
+// enabled one and axe never even looked at one. Asserting the computed opacity, not just the
+// attribute, is what makes the affordance itself non-optional.
+export const Disabled: Story = {
+  args: { value: 'marina@example.com', disabled: true },
+  play: async ({ canvas }) => {
+    const input = canvas.getByLabelText(LABEL)
+    await expect(input).toBeDisabled()
+    await expect(parseFloat(getComputedStyle(input).opacity)).toBeLessThan(1)
+  },
+}

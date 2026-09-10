@@ -1,1 +1,30 @@
 @import 'tailwindcss';
+
+/* v2 design tokens (paper/ink palette from the approved prototype). The v1 app still uses
+   Tailwind's stock stone-* utilities; these are additive and do not change it. */
+@theme {
+  --color-paper: #f4f0e6;
+  --color-paper-2: #efe9db;
+  --color-paper-3: #e6dfcd;
+  --color-ink: #1a1713;
+  --color-accent: #a63d20;
+
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-body: Newsreader, Georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* The page gutter. `clamp(20px,5vw,64px)` is the horizontal padding of every full-width band
+     in the prototype, where it appears verbatim six times. Named here so it is one edit, and so
+     `px-gutter` reads as a decision instead of an arbitrary value. */
+  --spacing-gutter: clamp(20px, 5vw, 64px);
+
+  /* The ADMIN's page gutter, and a second token rather than a second caller of the first. The
+     prototype never uses `clamp(20px,5vw,64px)` inside the admin: it uses `clamp(16px,4vw,40px)`
+     seven times and `clamp(16px,4vw,32px)` once. The difference is a design fact, not a rounding
+     one — the storefront is an editorial band and the admin is a working screen whose six-column
+     products table is already tight at its 900px floor, so 24px more padding per side at the top
+     end is 48px taken off the widest column. Normalising the two would edit the design to save a
+     line of CSS. The single 32px variant collapses into this one (8px narrower at the top end
+     only, on one row of the orders list). */
+  --spacing-gutter-admin: clamp(16px, 4vw, 40px);
+}

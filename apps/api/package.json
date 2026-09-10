@@ -7,6 +7,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/seed.ts",
+    "migrate:v2": "tsx src/migrate-v2.ts",
     "test": "vitest run --pool=forks --poolOptions.forks.minForks=1 --poolOptions.forks.maxForks=2"
   },
   "dependencies": {

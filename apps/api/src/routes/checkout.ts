@@ -1,73 +1,107 @@
 import {
-  INTL_ALLOWED_COUNTRIES,
-  SHIPPING_BR_CENTS,
-  SHIPPING_INTL_CENTS,
+  SHIPPING_METHODS,
   checkoutRequestSchema,
+  checkoutRules,
+  computeTotals,
+  hasPhysicalItems,
 } from '@shop/shared'
 import { Router } from 'express'
 import type Stripe from 'stripe'
 import { getEnv } from '../env.js'
 import { AppError } from '../errors.js'
+import { buildCheckoutSessionParams } from '../lib/checkout-session.js'
 import { stripe } from '../lib/stripe.js'
+import { nextOrderNumber } from '../models/counter.js'
+import { Order } from '../models/order.js'
 import { Product } from '../models/product.js'
 
 export const checkoutRouter = Router()
 
 checkoutRouter.post('/api/checkout', async (req, res) => {
-  const { items, destination, locale } = checkoutRequestSchema.parse(req.body)
+  const body = checkoutRequestSchema.parse(req.body)
   const env = getEnv()
 
-  const products = await Product.find({ slug: { $in: items.map((i) => i.slug) }, active: true })
+  // Prices and stock come from Mongo. The client only tells us slugs and quantities.
+  const products = await Product.find({ slug: { $in: body.items.map((i) => i.slug) }, active: true })
   const bySlug = new Map(products.map((p) => [p.slug, p]))
-
-  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = []
-  const metadataItems: { i: string; s: string; q: number; u: number }[] = []
-  let hasPhysical = false
-
-  for (const item of items) {
+  const lines = body.items.map((item) => {
     const product = bySlug.get(item.slug)
     if (!product) throw new AppError(400, 'UNKNOWN_ITEM', `Unknown item: ${item.slug}`)
     if (product.stock != null && item.qty > product.stock)
       throw new AppError(400, 'OUT_OF_STOCK', `Not enough stock for: ${item.slug}`)
-    if (product.type === 'physical') hasPhysical = true
-    lineItems.push({
-      quantity: item.qty,
-      price_data: {
-        currency: 'brl',
-        unit_amount: product.priceCents,
-        product_data: { name: product.name![locale]! },
-      },
-    })
-    metadataItems.push({ i: String(product._id), s: product.slug, q: item.qty, u: product.priceCents })
-  }
-
-  const shippingCents = destination === 'BR' ? SHIPPING_BR_CENTS : SHIPPING_INTL_CENTS
-  const allowedCountries = (destination === 'BR' ? ['BR'] : INTL_ALLOWED_COUNTRIES) as
-    Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[]
-
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    // v1 is card only (see design spec) — this also keeps the webhook's payment_status
-    // check meaningful, since card payments settle synchronously.
-    payment_method_types: ['card'],
-    line_items: lineItems,
-    locale,
-    ...(hasPhysical && {
-      shipping_address_collection: { allowed_countries: allowedCountries },
-      shipping_options: [
-        {
-          shipping_rate_data: {
-            display_name: destination === 'BR' ? 'Brazil (flat rate)' : 'International (flat rate)',
-            type: 'fixed_amount',
-            fixed_amount: { amount: shippingCents, currency: 'brl' },
-          },
-        },
-      ],
-    }),
-    metadata: { items: JSON.stringify(metadataItems), destination },
-    success_url: `${env.WEB_ORIGIN}/thanks?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.WEB_ORIGIN}/cart`,
+    return { product, qty: item.qty }
   })
 
-  res.json({ url: session.url })
+  const physical = hasPhysicalItems(lines.map((l) => ({ type: l.product.type })))
+  const ruleErrors = checkoutRules(body, physical)
+  if (ruleErrors) throw new AppError(400, 'VALIDATION', 'Invalid checkout details', ruleErrors)
+
+  const method = physical ? body.shippingMethod! : null
+  const address = physical ? body.shippingAddress! : null
+  const totals = computeTotals(
+    lines.map((l) => ({ priceCents: l.product.priceCents, qty: l.qty, type: l.product.type })),
+    method,
+  )
+
+  const orderNumber = await nextOrderNumber()
+  const order = await Order.create({
+    orderNumber,
+    status: 'pending',
+    buyer: body.buyer,
+    shippingAddress: address,
+    shippingMethod: method,
+    notes: body.notes,
+    giftMessage: body.giftMessage,
+    referral: body.referral,
+    locale: body.locale,
+    items: lines.map((l) => ({
+      productId: String(l.product._id),
+      slug: l.product.slug,
+      name: { pt: l.product.name!.pt!, en: l.product.name!.en! },
+      qty: l.qty,
+      unitAmountCents: l.product.priceCents,
+    })),
+    amounts: { ...totals, currency: 'brl' },
+  })
+
+  let session: Stripe.Checkout.Session
+  try {
+    session = await stripe.checkout.sessions.create(
+      buildCheckoutSessionParams({
+        orderId: String(order._id),
+        orderNumber,
+        locale: body.locale,
+        buyer: body.buyer,
+        lines: lines.map((l) => ({ name: l.product.name![body.locale]!, unitAmountCents: l.product.priceCents, qty: l.qty })),
+        shipping: method && address ? { method: SHIPPING_METHODS[method], address } : null,
+        webOrigin: env.WEB_ORIGIN,
+      }),
+    )
+  } catch (err) {
+    // No session means the buyer can never pay this order; drop it rather than leave a ghost.
+    // Best-effort: if the cleanup itself fails, still surface the original Stripe failure.
+    await Order.deleteOne({ _id: order._id }).catch((cleanupErr) => {
+      console.error('[checkout] RECONCILE: could not delete pending order after Stripe failure', {
+        orderNumber,
+        cleanupErr,
+      })
+    })
+    console.error('[checkout] stripe session creation failed', { orderNumber, err })
+    throw new AppError(502, 'STRIPE_UNAVAILABLE', 'Payment provider unavailable, please try again')
+  }
+
+  try {
+    await Order.updateOne({ _id: order._id }, { $set: { stripeSessionId: session.id } })
+  } catch (err) {
+    // A live Stripe session with nothing to reconcile it to is worse than an expired one:
+    // expire the session and drop the order rather than leave an unpayable ghost order behind.
+    await Promise.allSettled([stripe.checkout.sessions.expire(session.id), Order.deleteOne({ _id: order._id })])
+    console.error('[checkout] RECONCILE: failed to persist session id after Stripe session creation', {
+      orderNumber,
+      sessionId: session.id,
+      err,
+    })
+    throw err
+  }
+  res.json({ url: session.url, orderNumber })
 })

@@ -1,0 +1,103 @@
+// `aria-errormessage` alone is not enough: axe's aria-valid-attr-value requires the referenced
+// message to ALSO use an announcement technique, so `aria-describedby` points at the same node.
+// Without it the error is painted but never spoken.
+interface Props {
+  id: string
+  value: string
+  onChange: (value: string) => void
+  type?: 'text' | 'email' | 'tel' | 'number' | 'password'
+  placeholder?: string
+  /**
+   * The HTML autofill token for what this field collects (`username`, `current-password`, `email`,
+   * …). WCAG 2.2 SC 1.3.5 asks for it on any field collecting information about the person filling
+   * it in, and on the admin login it is also what lets a password manager fill the pair at all.
+   */
+  autoComplete?: string
+  /**
+   * The accessible name, for a field that has no visible `<label htmlFor>` of its own or whose
+   * visible label repeats down a list. `Stepper` carries the same prop for the same reason: a cart
+   * drawer renders one per line and "Aumentar quantidade" three times over says nothing about
+   * which line it belongs to. The admin's spec rows are four unlabelled boxes twelve times over,
+   * which is the densest version of that problem on the branch.
+   *
+   * It WINS over a wrapping or associated `<label>`, so a caller that passes both is choosing to
+   * show one string and announce a longer one. That is legal under SC 2.5.3 only while the visible
+   * text is contained in the name — which is why every caller here builds the name by prefixing
+   * the visible words rather than replacing them.
+   */
+  label?: string
+  error?: string
+  disabled?: boolean
+  /**
+   * Take focus as this input MOUNTS. It exists for a control that replaces the control that was
+   * just pressed — the admin's tracking form appears where its own trigger was, and without this
+   * a reader who opened it with the keyboard is dropped on the body of the page. `ProductRow`
+   * solved the same problem the same way on its delete confirmation. Moving focus any other way
+   * needs a handle on a node, which `src/ui` may not hold.
+   */
+  autoFocus?: boolean
+  /**
+   * The longest value the API will accept, mirrored onto the control so an over-long value is
+   * PREVENTED rather than reported. It is the answer for a field whose only possible validation
+   * failure is length: there is nothing useful to say afterwards that the cap does not say first.
+   */
+  maxLength?: number
+}
+
+/**
+ * The focus indicator is a real `outline`, not the prototype's border-colour swap. Measured in
+ * Chromium, that swap left `outline-style: none` and only moved the 1px border from #1a1713 to
+ * #a63d20 — a hue-only signal at 2.81:1 between the unfocused and focused states, where WCAG 2.2
+ * asks for 3:1. A 2px accent outline held 2px off the control paints on paper (#f4f0e6) at 5.58:1
+ * and changes the control's footprint as well as its colour, so it no longer relies on hue alone.
+ * axe ships no rule for this, so only the `FocusRing` story keeps it honest.
+ *
+ * `outline-none` is deliberately ABSENT rather than merely unnecessary. Tailwind 4 compiles it to
+ * `--tw-outline-style: none`, and the `outline-2` width utility resolves its style from that same
+ * variable — so leaving it in place would silently cancel the very ring it sits next to.
+ *
+ * `disabled:opacity-40` matches Stepper. It is the affordance this prop lacked entirely: without
+ * it a disabled field was pixel-identical to an enabled one.
+ */
+const FIELD =
+  'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
+
+export function TextInput({
+  id,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  autoComplete,
+  label,
+  error,
+  disabled,
+  autoFocus,
+  maxLength,
+}: Props) {
+  return (
+    <>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        aria-label={label}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        maxLength={maxLength}
+        aria-invalid={error ? true : undefined}
+        aria-errormessage={error ? `${id}-error` : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        className={`${FIELD} ${error ? 'border-accent' : ''}`}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error && (
+        <p id={`${id}-error`} className="font-mono text-accent mt-1 text-[11px]">
+          {error}
+        </p>
+      )}
+    </>
+  )
+}
