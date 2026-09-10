@@ -292,6 +292,56 @@ describe('HomeRoute', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 
+  it('waits on a loading screen rather than on nothing at all', async () => {
+    // Task 11 rendered `null` here, so the first paint of every visit was the header alone over
+    // blank paper. The request is held open on purpose: a stub that answers immediately never lets
+    // the pending branch reach a paint, and the assertion would be about a frame nobody sees.
+    let release = () => {}
+    const answered = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    stubFetch(async () => {
+      await answered
+      return catalogue(letter)
+    })
+    renderShop('/')
+
+    expect(screen.getByRole('status').textContent).toBe('Carregando…')
+    // And the page under it has not started: the outline belongs to the catalogue, which is not
+    // there yet, so a heading at this point would be one the reader hears replaced a moment later.
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+
+    release()
+    expect(await screen.findByRole('link', { name: 'Ver a peça em destaque' })).toBeInTheDocument()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('says the shop is down rather than empty, and asks again on demand', async () => {
+    // THE BUG THIS CLOSES, stated as an assertion: a failed catalogue used to fall through to
+    // `CatalogGrid`'s "nenhuma peça no catálogo ainda", so a shop that was down and a shop with
+    // nothing to sell were the same screen.
+    let attempt = 0
+    const fetchSpy = stubFetch(() => {
+      attempt += 1
+      return attempt === 1 ? json({ error: { code: 'INTERNAL', message: 'boom' } }, 500) : catalogue(letter)
+    })
+    renderShop('/')
+
+    const heading = await screen.findByRole('heading', { level: 1 })
+    expect(heading.textContent).toBe('Não consegui carregar o catálogo.')
+    expect(screen.queryByText('Nenhuma peça no catálogo ainda.')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+
+    // The retry is wired to the query and not to a re-render: a second request goes out and the
+    // catalogue it answers with is what ends up on screen.
+    expect(await screen.findByRole('link', { name: 'Ver a peça em destaque' })).toHaveAttribute(
+      'href',
+      `/exhibit/${letter.slug}`,
+    )
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).endsWith('/api/products'))).toHaveLength(2)
+  })
+
   it('falls back to the first piece, and to none at all for an empty catalogue', async () => {
     // The other two rungs of the same ladder, and they are separate guards: a container that only
     // read the flag would show no hero call to action for a catalogue where nobody has ticked the
@@ -364,6 +414,61 @@ describe('ProductRoute', () => {
     // `drawing`'s own alt is empty in the fixture, so the gallery falls back to the planted key —
     // which also proves the photo on screen belongs to the new piece and not to the old one.
     expect(screen.getByRole('img')).toHaveAttribute('alt', `Foto de ${drawing.name.pt}`)
+  })
+
+  it('waits on a loading screen rather than on a blank page', async () => {
+    // The catalogue answers immediately and only the piece is held: the shell renders either way,
+    // so holding both would prove nothing about which request this screen is waiting for.
+    let release = () => {}
+    const answered = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    stubFetch(async (url) => {
+      if (!url.includes('/api/products/')) return catalogue(letter)
+      await answered
+      return json({ product: letter })
+    })
+    renderShop(`/exhibit/${letter.slug}`)
+
+    expect(screen.getByRole('status').textContent).toBe('Carregando…')
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+
+    release()
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe(letter.name.pt)
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('gives a mistyped slug a screen instead of a blank page', async () => {
+    // `/api/products/` with the trailing slash is the single-piece route; the catalogue the shell
+    // fetches is `/api/products` and still has to answer, or the header has nothing to count.
+    stubFetch((url) =>
+      url.includes('/api/products/')
+        ? json({ error: { code: 'PRODUCT_NOT_FOUND', message: 'Product not found' } }, 404)
+        : catalogue(letter),
+    )
+    renderShop('/exhibit/nao-existe')
+
+    const heading = await screen.findByRole('heading', { level: 1 })
+    expect(heading.textContent).toBe('Essa peça não está no catálogo.')
+    expect(screen.getByRole('link', { name: 'Ver o catálogo' })).toHaveAttribute('href', '/')
+    // No retry, and that is the branch rather than a styling choice: a 404 answers the same way
+    // however many times it is asked, so a button here would make the reader responsible for a
+    // dead end. Its ABSENCE is what separates this screen from the one below.
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
+  })
+
+  it('separates a piece that is gone from a shop that is down', async () => {
+    // The same blank page in Task 11, and it must not say the piece was sold: the split is the
+    // status on the thrown `ApiError`, and with it collapsed a 500 tells a buyer their piece left
+    // the catalogue.
+    stubFetch((url) =>
+      url.includes('/api/products/') ? json({ error: { code: 'INTERNAL', message: 'boom' } }, 500) : catalogue(letter),
+    )
+    renderShop(`/exhibit/${letter.slug}`)
+
+    const heading = await screen.findByRole('heading', { level: 1 })
+    expect(heading.textContent).toBe('Não consegui carregar esta peça.')
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeEnabled()
   })
 })
 

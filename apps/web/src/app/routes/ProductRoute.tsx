@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
-import { ProductPage } from '../../ui/pages'
+import { LoadingPage, NoticePage, ProductPage } from '../../ui/pages'
+import { ApiError } from '../api/client'
 import { useProduct } from '../api/queries'
 import { useShop } from '../ShopShellContainer'
 
@@ -23,11 +24,18 @@ import { useShop } from '../ShopShellContainer'
  * painted and then swapped. Comparing the rendered slug with the routed one and correcting both in
  * the same pass is React's own documented answer to state that derives from a prop, and it costs a
  * re-render rather than a repaint.
+ *
+ * A MISTYPED SLUG AND A BROKEN SHOP ARE TWO SCREENS, where Task 11 had one blank page for both.
+ * The split is `ApiError.status`, and it decides one thing the reader can act on: a 404 will answer
+ * the same way however many times it is asked, so that branch offers the catalogue and no retry,
+ * while anything else might work on the next try and offers both. Reading the status off the error
+ * rather than treating every failure as "not found" is what keeps the shop from telling a buyer a
+ * piece was sold when the API was merely down.
  */
 export function ProductRoute() {
   const { slug = '' } = useParams()
   const { lang, addToCart } = useShop()
-  const { data: product } = useProduct(slug)
+  const { data: product, isPending, error, refetch } = useProduct(slug)
   const [selectedPhoto, setSelectedPhoto] = useState(0)
   const [shownSlug, setShownSlug] = useState(slug)
 
@@ -36,11 +44,14 @@ export function ProductRoute() {
     setSelectedPhoto(0)
   }
 
-  // A piece that is loading and a slug that is not in the catalogue land in the same place, which
-  // is a gap rather than a decision: `ProductPage` requires a product and there is no not-found
-  // screen anywhere in the design or the spec. Flagged for Task 13 — a mistyped link deserves a
-  // sentence, not a blank page.
-  if (!product) return null
+  if (isPending) return <LoadingPage />
+  if (!product) {
+    return error instanceof ApiError && error.status === 404 ? (
+      <NoticePage kind="product-not-found" />
+    ) : (
+      <NoticePage kind="product-unavailable" onRetry={() => void refetch()} />
+    )
+  }
 
   return (
     <ProductPage

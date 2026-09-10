@@ -1,4 +1,4 @@
-import { HomePage } from '../../ui/pages'
+import { HomePage, LoadingPage, NoticePage } from '../../ui/pages'
 import { useProducts } from '../api/queries'
 import { CONTACT_EMAIL, useShop } from '../ShopShellContainer'
 
@@ -11,19 +11,23 @@ import { CONTACT_EMAIL, useShop } from '../ShopShellContainer'
  * own order and no second sort is invented on top of it. `null` — an empty catalogue — is a state
  * the shop really is in until something is on sale, and `Hero` renders it.
  *
- * NOTHING IS RENDERED WHILE THE FIRST FETCH IS IN FLIGHT, and that is the least-bad of three bad
- * options. `HomePage` has no loading prop and no error prop — the design supplies neither state
- * (the extract lists it among the things it does not provide) — so the alternatives are painting
- * `CatalogGrid`'s "nothing here yet" over a shop that is merely still loading, or inventing copy
- * that `copy.test.ts` cannot see, since it only scans `src/ui`. A failed load still lands on the
- * empty-catalogue screen, which is wrong and is flagged for Task 13: a shop that is down and a
- * shop with nothing to sell should not look the same.
+ * THE THREE ANSWERS ARE NOW THREE SCREENS. Task 11 shipped one — the catalogue — and rendered
+ * nothing while the request was in flight and the EMPTY catalogue when it failed, so a shop that
+ * was down and a shop with nothing to sell looked identical. `LoadingPage` and `NoticePage` are
+ * where those two sentences live, in `src/ui` where `test/copy.test.ts` can see them; a sentence
+ * written in this file would ship as fluent English to a Portuguese reader with nothing to notice.
+ *
+ * THE ERROR BRANCH ASKS FOR DATA, NOT FOR A STATUS. `!data` rather than `isError` is the difference
+ * between a shop that survives a failed background refetch and one that replaces a catalogue it
+ * already has with an apology: react-query keeps the last good list on a refetch that fails, and
+ * the reader who is looking at it should keep looking at it. Nothing to show is the only state that
+ * earns the dead end.
  */
 export function HomeRoute() {
   const { lang } = useShop()
-  const { data, isPending } = useProducts()
-  if (isPending) return null
-  const products = data ?? []
+  const { data: products, isPending, refetch } = useProducts()
+  if (isPending) return <LoadingPage />
+  if (!products) return <NoticePage kind="catalogue-unavailable" onRetry={() => void refetch()} />
   return (
     <HomePage
       products={products}
