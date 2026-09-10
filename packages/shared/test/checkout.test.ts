@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkoutRequestSchema, checkoutRules } from '../src/checkout'
+import { checkoutRequestSchema, checkoutRules, fieldErrorsFromIssues } from '../src/checkout'
 
 const buyer = { name: 'Marina Bicalho', email: 'marina@example.com' }
 const brAddress = {
@@ -78,5 +78,46 @@ describe('checkoutRules', () => {
   it('rejects a country we do not ship to', () => {
     const errors = checkoutRules({ shippingAddress: { ...usAddress, country: 'KP' }, shippingMethod: 'intl' }, true)
     expect(errors).toEqual({ 'shippingAddress.country': ['not_allowed'], shippingMethod: ['not_available'] })
+  })
+})
+
+describe('fieldErrorsFromIssues', () => {
+  it('keys an issue by its dotted path', () => {
+    expect(fieldErrorsFromIssues([{ path: ['buyer', 'email'], message: 'invalid_email' }])).toEqual({
+      'buyer.email': ['invalid_email'],
+    })
+  })
+
+  it('keys a path-less issue under _', () => {
+    // The whole-object refinements — `duplicate_items` on `items` is keyed, but a refinement on the
+    // request itself arrives with an empty path and has nowhere else to go.
+    expect(fieldErrorsFromIssues([{ path: [], message: 'duplicate_items' }])).toEqual({ _: ['duplicate_items'] })
+  })
+
+  it('collects several issues on one field instead of keeping the last', () => {
+    expect(
+      fieldErrorsFromIssues([
+        { path: ['buyer', 'name'], message: 'too_small' },
+        { path: ['buyer', 'name'], message: 'not_a_name' },
+      ]),
+    ).toEqual({ 'buyer.name': ['too_small', 'not_a_name'] })
+  })
+
+  it('joins a numeric index into the path rather than dropping it', () => {
+    // `items[1].qty` is a real rejection shape, and a key of `items.qty` would put the second
+    // line's error on the first line's field.
+    expect(fieldErrorsFromIssues([{ path: ['items', 1, 'qty'], message: 'too_big' }])).toEqual({
+      'items.1.qty': ['too_big'],
+    })
+  })
+
+  it('produces exactly what a real ZodError carries, for the request the checkout actually sends', () => {
+    // The point of the helper: it is fed real zod issues, not the literals above. An empty request
+    // fails several fields at once, which is also what makes it a fair test of the grouping.
+    const parsed = checkoutRequestSchema.safeParse({ items: [], locale: 'pt', buyer: { name: '', email: '' } })
+    if (parsed.success) throw new Error('an empty checkout must fail the schema')
+    const errors = fieldErrorsFromIssues(parsed.error.issues)
+    expect(Object.keys(errors).sort()).toEqual(['buyer.email', 'buyer.name', 'items'])
+    expect(errors['buyer.email']).toHaveLength(1)
   })
 })

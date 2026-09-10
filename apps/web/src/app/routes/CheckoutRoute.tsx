@@ -5,6 +5,7 @@ import {
   checkoutRequestSchema,
   checkoutRules,
   computeTotals,
+  fieldErrorsFromIssues,
   hasPhysicalItems,
   shippingOptionsFor,
 } from '@shop/shared'
@@ -61,22 +62,6 @@ const EMPTY_NOTES: NotesValues = { notes: '', giftMessage: '', referral: '' }
 /** An untouched optional field is absent, not empty: the order should not carry `""` for a phone. */
 function optional(value: string): string | undefined {
   return value.trim() === '' ? undefined : value
-}
-
-/**
- * The same shape `apps/api/src/errors.ts:26-33` builds from a ZodError — keyed by
- * `issue.path.join('.')`, `_` for an issue with no path — so a rejection the browser catches lands
- * on exactly the fields a rejection from the API would. It is a SECOND COPY of that mapping and
- * that is worth fixing upstream: it belongs in `@shop/shared` beside the schema it decodes, next
- * to `checkoutRules`, rather than once in an express error handler and once here.
- */
-function fieldErrorsOf(issues: readonly { path: (string | number)[]; message: string }[]): FieldErrors {
-  const errors: FieldErrors = {}
-  for (const issue of issues) {
-    const key = issue.path.length > 0 ? issue.path.join('.') : '_'
-    ;(errors[key] ??= []).push(issue.message)
-  }
-  return errors
 }
 
 /**
@@ -159,7 +144,7 @@ export function CheckoutRoute() {
 
     const parsed = checkoutRequestSchema.safeParse(request)
     if (!parsed.success) {
-      setErrors(fieldErrorsOf(parsed.error.issues))
+      setErrors(fieldErrorsFromIssues(parsed.error.issues))
       // The button is at the bottom of a screen the fields have scrolled off. Without a line beside
       // it, a rejected submit looks like a button that does nothing.
       setSubmitError('VALIDATION')

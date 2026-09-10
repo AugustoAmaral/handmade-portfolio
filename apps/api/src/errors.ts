@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
+import { fieldErrorsFromIssues } from '@shop/shared'
 import { ZodError } from 'zod'
 
 export class AppError extends Error {
@@ -24,11 +25,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return
   }
   if (err instanceof ZodError) {
-    const fieldErrors: Record<string, string[]> = {}
-    for (const issue of err.issues) {
-      const key = issue.path.length ? issue.path.join('.') : '_'
-      ;(fieldErrors[key] ??= []).push(issue.message)
-    }
+    // The mapping is `@shop/shared`'s, not this file's: the browser parses the same request with
+    // the same schema before it ever posts, so the field names it hangs errors on have to be the
+    // ones this handler would have produced.
+    const fieldErrors = fieldErrorsFromIssues(err.issues)
     res.status(400).json({ error: { code: 'VALIDATION', message: 'Invalid request', fieldErrors } })
     return
   }
