@@ -129,3 +129,63 @@ export const productWithoutPhotos: PublicProduct = deepFreeze({
 })
 
 export const products: PublicProduct[] = deepFreeze([letter, drawing, soldOutDrawing, digitalLetter])
+
+// Twelve spec rows, which is `productInputSchema`'s cap exactly — the admin's specs editor
+// disables its add button here, and no other fixture reaches it. Its own description and its own
+// specs array, like every fixture above: this one exists to be AT the limit, not to also be a
+// story about missing photos.
+export const productWithMaxSpecs: PublicProduct = deepFreeze({
+  ...letter,
+  id: 'p-letter-box',
+  slug: 'caixa-de-cartas',
+  name: { pt: 'Caixa de cartas', en: 'Letter box' },
+  subtitle: { pt: 'Doze cartas · caixa costurada', en: 'Twelve letters · sewn box' },
+  description: {
+    pt: 'Doze cartas escritas à mão ao longo de um ano, guardadas numa caixa que eu costuro. A ficha desta peça é a mais longa do catálogo.',
+    en: 'Twelve handwritten letters over a year, kept in a box I sew myself. This piece has the longest spec sheet in the catalogue.',
+  },
+  priceCents: 39000,
+  stock: 2,
+  specs: [
+    { key: { pt: 'Formato', en: 'Format' }, value: { pt: 'A5, 12 cartas', en: 'A5, 12 letters' } },
+    { key: { pt: 'Papel', en: 'Paper' }, value: { pt: 'Algodão 180g', en: '180gsm cotton' } },
+    { key: { pt: 'Tinta', en: 'Ink' }, value: { pt: 'Nanquim preto', en: 'Black India ink' } },
+    { key: { pt: 'Caixa', en: 'Box' }, value: { pt: 'Papelão revestido', en: 'Covered board' } },
+    { key: { pt: 'Costura', en: 'Binding' }, value: { pt: 'Linha de algodão', en: 'Cotton thread' } },
+    { key: { pt: 'Peso', en: 'Weight' }, value: { pt: '540 g', en: '540 g' } },
+    { key: { pt: 'Prazo', en: 'Lead time' }, value: { pt: '4 semanas', en: '4 weeks' } },
+    { key: { pt: 'Embalagem', en: 'Packaging' }, value: { pt: 'Papel kraft', en: 'Kraft paper' } },
+    { key: { pt: 'Envio', en: 'Shipping' }, value: { pt: 'Correios, com rastreio', en: 'Correios, tracked' } },
+    { key: { pt: 'Assinatura', en: 'Signature' }, value: { pt: 'Numerada e assinada', en: 'Numbered and signed' } },
+    { key: { pt: 'Idioma', en: 'Language' }, value: { pt: 'Português', en: 'Portuguese' } },
+    { key: { pt: 'Trocas', en: 'Returns' }, value: { pt: '7 dias', en: '7 days' } },
+  ],
+  photos: [],
+  featured: false,
+})
+
+// Three photos, which is the smallest number that has a MIDDLE: the photo editor's reorder
+// controls disable at the ends, and with two cards every card is an end.
+export const productWithThreePhotos: PublicProduct = deepFreeze({
+  ...letter,
+  id: 'p-triptych',
+  slug: 'triptico-nanquim',
+  name: { pt: 'Tríptico a nanquim', en: 'India ink triptych' },
+  subtitle: { pt: 'Três folhas · A5', en: 'Three sheets · A5' },
+  description: {
+    pt: 'Três desenhos a nanquim que só fazem sentido juntos, vendidos como uma peça só. Fotografei os três lado a lado.',
+    en: 'Three India ink drawings that only make sense together, sold as one piece. I photographed all three side by side.',
+  },
+  priceCents: 26000,
+  stock: 1,
+  specs: [
+    { key: { pt: 'Peças', en: 'Sheets' }, value: { pt: 'Três, A5', en: 'Three, A5' } },
+    { key: { pt: 'Técnica', en: 'Medium' }, value: { pt: 'Nanquim sobre algodão', en: 'India ink on cotton' } },
+  ],
+  photos: [
+    { key: 'products/triptych/1.webp', url: 'https://img.example.com/products/triptych/1.webp', alt: { pt: 'Folha da esquerda', en: 'Left sheet' } },
+    { key: 'products/triptych/2.webp', url: 'https://img.example.com/products/triptych/2.webp', alt: { pt: 'Folha do meio', en: 'Middle sheet' } },
+    { key: 'products/triptych/3.webp', url: 'https://img.example.com/products/triptych/3.webp', alt: { pt: '', en: '' } },
+  ],
+  featured: false,
+})

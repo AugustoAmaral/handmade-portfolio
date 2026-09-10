@@ -1,6 +1,6 @@
 import { type FieldErrors, type ShippingMethod, type ShippingMethodInfo, formatPrice } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
-import { RuledList } from '../primitives'
+import { RuledList, RuledRow } from '../primitives'
 import { CheckoutSection, useFieldError } from './CheckoutSection'
 
 export interface CheckoutShippingSectionProps {
@@ -55,10 +55,17 @@ export function CheckoutShippingSection({ options, selected, lang, errors, onSel
             {domestic ? t('Ship to: Brazil') : t('Ship to: outside Brazil')}
           </legend>
           <RuledList>
+            {/* `RuledRow` and not the three classes it paints, which is what these rows used to
+                copy out: the background, the padding and the horizontal rhythm in a second place,
+                where a row that lost `bg-paper` would show the list's ink through and read as a
+                rendering fault. It could not consume the primitive before, because the row has to
+                be a `<label>` for the radio inside it to be clickable and `RuledRow` was a `<div>`
+                — so the primitive grew the same `as` union `RuledList` already had. */}
             {options.map((option) => (
-              <label
+              <RuledRow
                 key={option.id}
-                className="bg-paper hover:bg-paper-2 has-[:focus-visible]:outline-2 has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-accent flex cursor-pointer items-center gap-3 px-4 py-3.5"
+                as="label"
+                className="hover:bg-paper-2 has-[:focus-visible]:outline-2 has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-accent flex cursor-pointer items-center gap-3"
               >
                 <input
                   type="radio"
@@ -71,7 +78,7 @@ export function CheckoutShippingSection({ options, selected, lang, errors, onSel
                 <span className="font-body text-[17px] leading-[1.2]">{option.name[lang]}</span>
                 <span className="font-mono text-[11px] tracking-[0.04em] opacity-65">{option.eta[lang]}</span>
                 <span className="font-mono ml-auto text-[13px]">{formatPrice(option.cents, lang)}</span>
-              </label>
+              </RuledRow>
             ))}
           </RuledList>
         </fieldset>

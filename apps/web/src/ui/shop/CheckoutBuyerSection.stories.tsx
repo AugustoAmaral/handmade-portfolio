@@ -120,3 +120,23 @@ export const InEnglish: Story = {
     await expect(canvas.queryByLabelText('Nome completo')).toBeNull()
   },
 }
+
+/**
+ * SC 1.3.5 (Identify Input Purpose). Asserted rather than eyeballed, because a token that is
+ * merely misspelled is inert — the browser ignores what it does not recognise and the field goes
+ * on looking like it declares a purpose.
+ *
+ * `name`, NOT `username`. The admin login uses `username` because the autofill spec reserves that
+ * token for the identifier half of a sign-in pair, and it is what pairs with `current-password`.
+ * This is a buyer writing down who they are, so it is the plain `name` purpose — and a shop that
+ * copied the login's token here would have a password manager offering an e-mail address as
+ * somebody's full name.
+ */
+export const AutofillTokens: Story = {
+  args: { values: buyerValuesOf(brCheckout.buyer) },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('Nome completo')).toHaveAttribute('autocomplete', 'name')
+    await expect(canvas.getByLabelText('E-mail')).toHaveAttribute('autocomplete', 'email')
+    await expect(canvas.getByLabelText('Telefone / WhatsApp')).toHaveAttribute('autocomplete', 'tel')
+  },
+}

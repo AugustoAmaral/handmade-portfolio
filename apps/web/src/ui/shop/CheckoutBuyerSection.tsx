@@ -26,6 +26,11 @@ export interface CheckoutBuyerSectionProps {
  * vocabularies wearing one type and the container is one typo away from writing a `buyer.name`
  * property onto its form state and never noticing.
  *
+ * THE THREE AUTOFILL TOKENS ARE `name`, `email` AND `tel` — SC 1.3.5. `name` and not `username`:
+ * the autofill list reserves `username` for the identifier half of a sign-in pair, which is why
+ * the admin login uses it, and a buyer writing down who they are is the plain `name` purpose. The
+ * same distinction the other way round is what keeps `tel` off the admin form.
+ *
  * THE CPF FIELD IS GONE — spec decision 3 — which takes the prototype's four fields down to
  * three in a `repeat(auto-fit,minmax(180px,1fr))` grid. Four wrapped 2x2 at every width; three
  * wrap 2+1, and the ragged half-width leftover lands on the phone at exactly the widths the
@@ -46,6 +51,7 @@ export function CheckoutBuyerSection({ values, errors, onChange }: CheckoutBuyer
           wide
           id="buyer-name"
           label={t('Full name')}
+          autoComplete="name"
           value={values.name}
           error={errorFor('buyer.name')}
           onChange={(v) => onChange('name', v)}
@@ -54,6 +60,7 @@ export function CheckoutBuyerSection({ values, errors, onChange }: CheckoutBuyer
           id="buyer-email"
           type="email"
           label={t('E-mail')}
+          autoComplete="email"
           value={values.email}
           error={errorFor('buyer.email')}
           onChange={(v) => onChange('email', v)}
@@ -62,6 +69,7 @@ export function CheckoutBuyerSection({ values, errors, onChange }: CheckoutBuyer
           id="buyer-phone"
           type="tel"
           label={t('Phone / WhatsApp')}
+          autoComplete="tel"
           value={values.phone}
           error={errorFor('buyer.phone')}
           onChange={(v) => onChange('phone', v)}

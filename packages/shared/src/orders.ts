@@ -23,6 +23,22 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
   return ADMIN_ORDER_TRANSITIONS[from].includes(to)
 }
 
+/**
+ * What the panel can ask `GET /api/admin/orders` for, beside the absence of the parameter.
+ *
+ * THREE MODES, NOT TWO, and that is why the type does not include the third: a named status, `all`,
+ * and NOTHING — which the route reads as its own default, every status except `expired`. Absent is
+ * therefore not a synonym for `all`, and it has to be genuinely absent rather than empty, because
+ * the query is parsed with `z.enum([...ORDER_STATUSES, 'all']).optional()` and `?status=` is a 400.
+ * `AdminOrderFilter | undefined` is the whole contract; the `undefined` carries the third mode.
+ *
+ * It is HERE rather than in either layer that wants it because both do, and they cannot share
+ * otherwise: `src/ui` may import `react`, `react-i18next`, `@shop/shared` and itself, so a page and
+ * a query hook declaring the same union met only structurally and could have drifted apart without
+ * anything going red.
+ */
+export type AdminOrderFilter = OrderStatus | 'all'
+
 export interface OrderItemSnapshot {
   productId: string
   slug: string

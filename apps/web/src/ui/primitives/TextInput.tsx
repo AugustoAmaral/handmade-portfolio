@@ -5,10 +5,43 @@ interface Props {
   id: string
   value: string
   onChange: (value: string) => void
-  type?: 'text' | 'email' | 'tel' | 'number'
+  type?: 'text' | 'email' | 'tel' | 'number' | 'password'
   placeholder?: string
+  /**
+   * The HTML autofill token for what this field collects (`username`, `current-password`, `email`,
+   * …). WCAG 2.2 SC 1.3.5 asks for it on any field collecting information about the person filling
+   * it in, and on the admin login it is also what lets a password manager fill the pair at all.
+   */
+  autoComplete?: string
+  /**
+   * The accessible name, for a field that has no visible `<label htmlFor>` of its own or whose
+   * visible label repeats down a list. `Stepper` carries the same prop for the same reason: a cart
+   * drawer renders one per line and "Aumentar quantidade" three times over says nothing about
+   * which line it belongs to. The admin's spec rows are four unlabelled boxes twelve times over,
+   * which is the densest version of that problem on the branch.
+   *
+   * It WINS over a wrapping or associated `<label>`, so a caller that passes both is choosing to
+   * show one string and announce a longer one. That is legal under SC 2.5.3 only while the visible
+   * text is contained in the name — which is why every caller here builds the name by prefixing
+   * the visible words rather than replacing them.
+   */
+  label?: string
   error?: string
   disabled?: boolean
+  /**
+   * Take focus as this input MOUNTS. It exists for a control that replaces the control that was
+   * just pressed — the admin's tracking form appears where its own trigger was, and without this
+   * a reader who opened it with the keyboard is dropped on the body of the page. `ProductRow`
+   * solved the same problem the same way on its delete confirmation. Moving focus any other way
+   * needs a handle on a node, which `src/ui` may not hold.
+   */
+  autoFocus?: boolean
+  /**
+   * The longest value the API will accept, mirrored onto the control so an over-long value is
+   * PREVENTED rather than reported. It is the answer for a field whose only possible validation
+   * failure is length: there is nothing useful to say afterwards that the cap does not say first.
+   */
+  maxLength?: number
 }
 
 /**
@@ -29,7 +62,19 @@ interface Props {
 const FIELD =
   'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
 
-export function TextInput({ id, value, onChange, type = 'text', placeholder, error, disabled }: Props) {
+export function TextInput({
+  id,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  autoComplete,
+  label,
+  error,
+  disabled,
+  autoFocus,
+  maxLength,
+}: Props) {
   return (
     <>
       <input
@@ -37,7 +82,11 @@ export function TextInput({ id, value, onChange, type = 'text', placeholder, err
         type={type}
         value={value}
         placeholder={placeholder}
+        autoComplete={autoComplete}
+        aria-label={label}
         disabled={disabled}
+        autoFocus={autoFocus}
+        maxLength={maxLength}
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}
         aria-describedby={error ? `${id}-error` : undefined}

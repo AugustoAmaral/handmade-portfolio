@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent } from 'storybook/test'
 import { FieldLabel } from './FieldLabel'
 import { TextArea } from './TextArea'
+import { contrast, parseColor, surfaceBehind } from '../../../.storybook/contrast'
 
 const LABEL = 'Mensagem no cartão'
 
@@ -46,44 +47,13 @@ export const WithError: Story = {
   },
 }
 
-// WCAG relative luminance, inline and deliberately — the same arithmetic TextInput's FocusRing
-// story carries. The assertion has to be about a NUMBER: "an outline exists" would happily pass
-// the 1px hue-only signal this story exists to keep out. The helpers are duplicated rather than
-// shared because a CSF file cannot export a non-story without Storybook trying to render it.
-function luminance(color: string): number {
-  const [r, g, b] = color.match(/\d+/g)!.map(Number)
-  const channel = (v: number) => {
-    const s = v / 255
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
-}
+// The assertion has to be about a NUMBER: "an outline exists" would happily pass the 1px
+// hue-only signal this story exists to keep out. The surface is measured rather than assumed,
+// because the control and its wrapper are both `bg-transparent`.
 
-function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
-  return (hi! + 0.05) / (lo! + 0.05)
-}
-
-// The surface the ring is painted ON, measured instead of assumed. The control is `bg-transparent`
-// and so is its wrapper, so the first opaque background up the tree is what a user actually sees
-// behind the outline. Reading it from the DOM is what gives the contrast assertion below something
-// to do: with a file-local literal on both sides it was arithmetic over two constants two lines
-// after `outlineColor` had already been pinned to one of them, so it could only ever run in the
-// case where it was guaranteed to pass.
-function isOpaque(color: string): boolean {
-  const parts = color.match(/[\d.]+/g)
-  return parts != null && (parts.length < 4 || Number(parts[3]) > 0)
-}
-
-function surfaceBehind(element: Element): string {
-  for (let node: Element | null = element; node; node = node.parentElement) {
-    const background = getComputedStyle(node).backgroundColor
-    if (isOpaque(background)) return background
-  }
-  // Louder than a default: a white fallback would quietly hand the assertion the highest-contrast
-  // background there is and pass no matter what the ring did.
-  throw new Error('nothing opaque behind the control to measure the focus ring against')
-}
+// The arithmetic lives in `.storybook/contrast.ts`, shared by every story on the branch that has
+// to assert a ratio for itself. It was six copies until PR 4 Task 3, and by then they had
+// diverged; the note at the top of that file records what the divergence was and what it cost.
 
 // The regression this exists to catch is the one TextInput already guards: the first
 // implementation styled focus as `outline-none focus:border-accent`, which left
@@ -109,6 +79,6 @@ export const FocusRing: Story = {
     await expect(outlineStyle).not.toBe('none')
     await expect(parseFloat(outlineWidth)).toBeGreaterThanOrEqual(2)
     await expect(parseFloat(outlineOffset)).toBeGreaterThan(0)
-    await expect(contrast(outlineColor, surfaceBehind(field))).toBeGreaterThanOrEqual(3)
+    await expect(contrast(parseColor(outlineColor), surfaceBehind(field))).toBeGreaterThanOrEqual(3)
   },
 }

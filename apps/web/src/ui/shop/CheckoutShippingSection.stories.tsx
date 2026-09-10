@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent } from 'storybook/test'
 import { intlCheckout } from '../../fixtures/checkout'
 import { CheckoutShippingSection } from './CheckoutShippingSection'
+import { contrast, parseColor, surfaceBehind } from '../../../.storybook/contrast'
 
 // `not_available` is in no fixture, so it is derived from the function that emits it: a US address
 // with a domestic method is a real request the API really rejects with exactly this code.
@@ -10,22 +11,12 @@ const mismatched = checkoutRules({ shippingAddress: intlCheckout.shippingAddress
 if (!mismatched) throw new Error('a domestic method on an international address must violate the rules')
 const NOT_AVAILABLE: FieldErrors = mismatched
 
-// WCAG relative luminance, inline for the same reason TextInput.stories carries its own copy: the
-// assertion has to be about a NUMBER. "the radio has an accent colour" passes for any colour, and
-// axe evaluates no rule against a form control's indicator.
-function luminance(color: string): number {
-  const [r, g, b] = color.match(/\d+/g)!.map(Number)
-  const channel = (v: number) => {
-    const s = v / 255
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * channel(r!) + 0.7152 * channel(g!) + 0.0722 * channel(b!)
-}
+// The assertion has to be about a NUMBER: "the radio has an accent colour" passes for any
+// colour, and axe evaluates no rule against a form control's indicator.
 
-function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
-  return (hi! + 0.05) / (lo! + 0.05)
-}
+// The arithmetic lives in `.storybook/contrast.ts`, shared by every story on the branch that has
+// to assert a ratio for itself. It was six copies until PR 4 Task 3, and by then they had
+// diverged; the note at the top of that file records what the divergence was and what it cost.
 
 /**
  * The row a radio sits in: `<label><input><span>name</span><span>eta</span><span>price</span></label>`.
@@ -100,9 +91,12 @@ export const SelectionAndFocusAreVisible: Story = {
   play: async ({ canvas }) => {
     const radio = canvas.getAllByRole('radio')[0]!
     const row = radio.parentElement!
-    const surface = getComputedStyle(row).backgroundColor
+    // The row paints its own `bg-paper`, so the walk stops there — which is also the correct
+    // surface for this ring: `-outline-offset-2` draws it INSIDE the border box, on top of that
+    // background, unlike the positive offsets everywhere else on the branch.
+    const surface = surfaceBehind(row)
 
-    await expect(contrast(getComputedStyle(radio).accentColor, surface)).toBeGreaterThanOrEqual(3)
+    await expect(contrast(parseColor(getComputedStyle(radio).accentColor), surface)).toBeGreaterThanOrEqual(3)
 
     await expect(getComputedStyle(row).outlineStyle).toBe('none')
     await userEvent.tab()
@@ -111,7 +105,7 @@ export const SelectionAndFocusAreVisible: Story = {
     const focused = getComputedStyle(row)
     await expect(focused.outlineStyle).not.toBe('none')
     await expect(parseFloat(focused.outlineWidth)).toBeGreaterThanOrEqual(2)
-    await expect(contrast(focused.outlineColor, surface)).toBeGreaterThanOrEqual(3)
+    await expect(contrast(parseColor(focused.outlineColor), surface)).toBeGreaterThanOrEqual(3)
   },
 }
 

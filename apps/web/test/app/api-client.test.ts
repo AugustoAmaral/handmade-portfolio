@@ -45,6 +45,15 @@ describe('api', () => {
     expect(headers.get('content-type')).toBeNull()
   })
 
+  it('resolves on a 204, whose body is not empty JSON but no body at all', async () => {
+    // `DELETE /api/admin/products/:id` is the only endpoint that answers this way, and `res.json()`
+    // REJECTS on an empty body rather than returning null. The parse guard below was written for
+    // HTML error pages from a proxy; this is the success path it also covers, and without it a
+    // deletion that worked surfaces as a SyntaxError from inside the client.
+    vi.stubGlobal('fetch', fetchStub(() => new Response(null, { status: 204 })))
+    await expect(api('/api/admin/products/p-letter', { method: 'DELETE' })).resolves.toEqual({})
+  })
+
   it('throws ApiError carrying the envelope code and fieldErrors', async () => {
     vi.stubGlobal(
       'fetch',

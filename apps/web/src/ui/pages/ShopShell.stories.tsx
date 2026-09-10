@@ -1,6 +1,6 @@
 import { computeTotals } from '@shop/shared'
 import type { Decorator, Meta, StoryObj } from '@storybook/react-vite'
-import { expect, fn } from 'storybook/test'
+import { expect, fn, within } from 'storybook/test'
 import { cartLines } from '../../fixtures/checkout'
 import { drawing, letter, products } from '../../fixtures/products'
 import { lineOf } from '../shop/CartLine.stories'
@@ -10,7 +10,13 @@ import { ShopShell } from './ShopShell'
 const LINES = [lineOf(letter, cartLines[0]!.qty), lineOf(drawing, cartLines[1]!.qty)]
 const TOTALS = computeTotals(cartLines, 'pac')
 
-const HEADER = { cartCount: 2, lang: 'pt' as const, onToggleLang: fn(), onOpenCart: fn() }
+// UNITS AND NOT LINES, derived rather than typed. `cartLines` is one letter and two drawings, so a
+// hardcoded `2` counted the ROWS — the exact defect `ShopHeader`'s own badge exists to avoid, baked
+// into the decorator every page story renders through. Nothing read the badge through this shell
+// yet, which is what made it a fixture waiting to be asserted rather than a failure.
+const CART_UNITS = cartLines.reduce((units, line) => units + line.qty, 0)
+
+const HEADER = { cartCount: CART_UNITS, lang: 'pt' as const, onToggleLang: fn(), onOpenCart: fn() }
 const DRAWER = {
   open: false,
   lines: LINES,
@@ -75,6 +81,29 @@ export const Default: Story = {
     // tree is still in the tab order, and that would be a live checkout link reachable through a
     // bag nobody opened.
     await expect(canvas.queryByRole('dialog')).toBeNull()
+  },
+}
+
+/**
+ * THE BADGE AND THE BAG UNDER IT COUNT THE SAME THING, and this shell is the only place they meet.
+ * `ShopHeader.stories` pins that the count reaches the name and `CartDrawer.stories` pins the lines;
+ * neither can see that the two DISAGREE, and the decorator every page story renders through said
+ * `cartCount: 2` over a bag holding three pieces in two rows — a hardcoded fixture reproducing the
+ * exact "counts rows, not units" defect the badge exists to avoid, waiting for the first story that
+ * read it.
+ *
+ * The expected number is summed from the drawer's own lines rather than typed, so a fixture that
+ * changes cannot make this agree by accident.
+ */
+export const TheBadgeCountsWhatIsInTheBag: Story = {
+  play: async ({ canvas }) => {
+    const units = DRAWER.lines.reduce((sum, line) => sum + line.qty, 0)
+    // The fixture has to be able to tell the two apart, or the assertion below is satisfied by
+    // either reading. Three pieces in two rows is the smallest bag that can.
+    await expect(units).toBeGreaterThan(DRAWER.lines.length)
+    // Scoped to the bar: an open drawer puts a second control with `sacola` in its name on the page.
+    const bar = within(canvas.getByRole('banner'))
+    await expect(bar.getByRole('button', { name: /sacola/i }).textContent).toBe(`Sacola (${units})`)
   },
 }
 

@@ -11,7 +11,11 @@ export const routes = {
   checkout: () => '/checkout',
   product: (slug: string) => `/exhibit/${q(slug)}`,
   thanks: (orderNumber: number, sessionId: string) => `/thanks?order=${orderNumber}&session_id=${q(sessionId)}`,
-  admin: () => '/admin',
+  // NO `admin: () => '/admin'`. It was here and nothing called it, and nothing on the shop side
+  // ever could: spec:11 keeps the panel unlinked, so the only href this builder could produce is
+  // the one address no component is allowed to point at. `App.tsx` matches `/admin` as a route
+  // PATTERN, which is a different thing from an address, and the panel's own bar links to the two
+  // sections rather than to their parent.
   adminProducts: () => '/admin/products',
   adminNewProduct: () => '/admin/products/new',
   adminProduct: (id: string) => `/admin/products/${q(id)}`,

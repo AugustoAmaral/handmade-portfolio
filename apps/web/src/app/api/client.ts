@@ -22,20 +22,30 @@ interface ErrorEnvelope {
 const MAX_ATTEMPTS = 3
 
 /**
+ * Whether the API has said its last word.
+ *
+ * A 4XX IS THE SERVER'S FINAL ANSWER: the reply is identical however many times it is asked, so
+ * nothing is fixed by asking again and the reader pays the whole wait. Anything else may NOT be
+ * final — a 5xx and a dropped connection (which never becomes an `ApiError` at all, because `fetch`
+ * rejects before there is a status to read) are both states that can be over a moment later.
+ *
+ * This lives here, alone, because two layers decide whether to ask again and they have to agree:
+ * `retryQuery` below, and `useOrder`'s poll. A second copy of the range check is how the two would
+ * come to disagree, and no test in either would see it.
+ */
+export function isFinalAnswer(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500
+}
+
+/**
  * Whether a failed query is worth asking again, wired as the QueryClient's default in `main.tsx`.
  *
- * A 4XX IS THE SERVER'S FINAL ANSWER. react-query retries three times by default with an
- * exponential backoff, so without this a mistyped `/exhibit/:slug` spends about seven seconds on
- * the loading screen re-asking for a piece the API has already said three times does not exist,
- * and only then shows the not-found screen. Nothing is fixed by the wait — the answer is identical
- * every time — and the reader pays all of it.
- *
- * Anything else IS worth repeating: a 5xx and a dropped connection (which never becomes an
- * `ApiError` at all, because `fetch` rejects before there is a status to read) are both states that
- * can be over by the next attempt.
+ * Without this a mistyped `/exhibit/:slug` spends about seven seconds of exponential backoff on the
+ * loading screen, re-asking for a piece the API has already said three times does not exist, and
+ * only then shows the not-found screen.
  */
 export function retryQuery(failureCount: number, error: unknown): boolean {
-  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  if (isFinalAnswer(error)) return false
   return failureCount < MAX_ATTEMPTS
 }
 
