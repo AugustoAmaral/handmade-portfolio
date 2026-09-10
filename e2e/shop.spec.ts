@@ -69,6 +69,80 @@ test('an address with no piece behind it gets a screen, not a blank page', async
   await expect(page.getByRole('link', { name: 'Ver o catálogo' })).toHaveAttribute('href', '/')
 })
 
+/**
+ * The bag → checkout walk, from a piece's own page. The first test above walks it from the
+ * catalogue and asserts every hop, because there it IS the subject; below it is a precondition, so
+ * it is written once instead of twice and the two tests that use it stay about what they assert.
+ */
+async function bagAndCheckout(page: Page, slug: string, name: string): Promise<void> {
+  await page.goto(`/exhibit/${slug}`)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(name)
+  await page.getByRole('button', { name: 'Colocar na sacola' }).click()
+  await page.getByRole('dialog', { name: 'Sua sacola' }).getByRole('link', { name: 'Ir para o pagamento' }).click()
+  await expect(page).toHaveURL(/\/checkout$/)
+  // AND THE PAGE HAS PAINTED, which the URL does not say: `CheckoutRoute` renders `null` until the
+  // catalogue query settles, and `toHaveCount(0)` is satisfied by a page that has not rendered yet.
+  // Measured, not feared — the first draft of the test below passed with `ships` forced to `true`,
+  // which should have put an address form on a digital-only checkout, because both of its absence
+  // assertions resolved against an empty screen. Anything asserted absent needs this line first.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Para onde eu mando, e para quem.')
+}
+
+/**
+ * The summary's shipping row, `<dt>` and `<dd>` read as one string. Scoped to the summary because
+ * `Frete` is also a word the bag drawer says, and anchored on `^Frete` because the sibling rows in
+ * the same `<dl>` are Subtotal and Total.
+ */
+function shippingRow(page: Page) {
+  return page.getByRole('region', { name: 'Seu pedido' }).locator('dl > div').filter({ hasText: /^Frete/ })
+}
+
+/**
+ * THE DIGITAL BRANCH, AND ITS OTHER HALF IN THE SAME TEST. `hasPhysicalItems(lines)` decides three
+ * things at once — whether the address section renders, whether the shipping section renders, and
+ * whether `computeTotals` charges postage — and it decides them from `CartLineData.type`, which is
+ * copied off the API's product payload by `cartLinesOf`. Nothing in the unit suite runs that copy:
+ * every story and every container test builds `CartLineData` by hand, so `type` is an input there
+ * and a derived fact only here.
+ *
+ * THE PAIR IS THE ASSERTION. A bag whose lines all lost `type` reads as digital-only, so a test
+ * that only asserted "no address form for a digital bag" would pass on a chain that dropped the
+ * field entirely — and would pass it in the dangerous direction, hiding the address form from
+ * someone buying a letter. So the same bag then gains a physical piece and has to grow both
+ * sections back. This is the trap PR 4's Task 9 named on its own new test, in the same shape: one
+ * side of a branch proves nothing about the branch.
+ *
+ * `R$ 0,00` IS A REAL PRICE HERE, not the em dash. `shippingCents` is `null` only while a choice is
+ * pending, and a bag with nothing to post has no choice to make — so the two shipping rows below
+ * are the two different things that one row can mean. Both patterns are anchored end to end for
+ * that reason: `toHaveText` with a regex is a SEARCH, so an unanchored pattern about either row is
+ * satisfied by the other one on the word `Frete` alone.
+ *
+ * THE SERVER'S HALF OF THE DIGITAL PATH IS NOT HERE. That a digital-only body is accepted with no
+ * address, no method and no shipping line item is `apps/api/test/checkout.test.ts`'s "stores a
+ * digital-only order without address or method and without a shipping line". This test is the half
+ * that test cannot see: what the BROWSER decides to send. It deliberately stops before the submit,
+ * because the only answer a submit can get here depends on which Stripe key the API booted with,
+ * and a test that means two different things in two environments is not one test.
+ */
+test('a digital-only bag is charged no postage, and one physical piece brings the address back', async ({ page }) => {
+  await bagAndCheckout(page, 'digital-letter', 'Exhibit 003 — Carta digital')
+
+  await expect(page.getByRole('heading', { level: 2, name: '02 · Endereço de entrega' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 2, name: '03 · Envio' })).toHaveCount(0)
+  await expect(shippingRow(page)).toHaveText(/^Frete\s*R\$\s*0,00$/)
+  // The button names the total, so this is the totals assertion too: R$ 20,00 is the piece and
+  // nothing else. `\s` covers the NO-BREAK SPACE `Intl` puts after `R$`.
+  await expect(page.getByRole('button', { name: /^Pagar/ })).toHaveAccessibleName(/^Pagar R\$\s*20,00$/)
+
+  await bagAndCheckout(page, 'handwritten-letter', 'Exhibit 001 — Carta escrita à mão')
+
+  await expect(page.getByRole('heading', { level: 2, name: '02 · Endereço de entrega' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: '03 · Envio' })).toBeVisible()
+  await expect(shippingRow(page)).toHaveText(/^Frete\s*—\s*Escolha uma opção de envio$/)
+  await expect(page.getByRole('button', { name: /^Pagar/ })).toHaveAccessibleName(/^Pagar R\$\s*70,00$/)
+})
+
 // The credentials `apps/api/src/dev-e2e.ts` seeds. They are defaults in that file rather than
 // constants here on purpose: it is the boot that decides them, and a copy in the spec would be the
 // kind of duplicate this branch has spent a whole task removing.
@@ -204,7 +278,85 @@ test('the photo list the form sends is one the real API accepts', async ({ page 
   await expect(altOf('Foto principal')).toHaveValue(toggled)
 })
 
+/**
+ * A REAL Stripe test key, told apart from the two keys that must not run this test.
+ *
+ * `sk_test_dummy` is what `dev-e2e.ts` defaults to, and it cannot create a session — Stripe answers
+ * 401 and `routes/checkout.ts` turns that into a 502. An absent secret arrives from GitHub Actions
+ * as `''` rather than as undefined, which is why `dev-e2e.ts` deletes an empty value before its
+ * `??=`, and why the check below is on the CONTENT of the string and not on its presence.
+ *
+ * A LIVE key is excluded by the same `sk_test_` test, and that half is a safety rule rather than a
+ * capability one: this test really does create a Checkout Session, and a session created with a
+ * live key is a real payment page for real money sitting in a real dashboard.
+ */
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY
+const REAL_STRIPE_TEST_KEY = STRIPE_KEY !== undefined && STRIPE_KEY.startsWith('sk_test_') && STRIPE_KEY !== 'sk_test_dummy'
+
+/**
+ * THE ONE TEST ON THIS BRANCH THAT TOUCHES STRIPE, and the skip is the honest half of it. Nothing
+ * here is stubbed: with a dummy key there is no Checkout Session to reach and no assertion that
+ * would mean anything, so the test says why it did not run instead of passing anyway. The checkout
+ * session's PARAMS have their own test (`apps/api/test/checkout-session.test.ts`) against a mocked
+ * Stripe; what only this test can say is that Stripe itself accepted them.
+ *
+ * WHAT `REACHES STRIPE` ASSERTS IS THE DESTINATION, NOT THE PAGE. The hosted page's total is the
+ * stronger fact and it is not available honestly: reading it means matching Stripe's own markup,
+ * which this repo does not own and which changes without a release note, and a test that reddens on
+ * someone else's redesign teaches everyone to ignore it. The amounts are asserted one step earlier,
+ * on markup this repo does own — the pay button names the total, and Stripe is charged from the
+ * API's re-priced order rather than from anything the browser sent.
+ *
+ * A PHYSICAL ORDER AND NOT v1's DIGITAL ONE. The digital session is a strict subset of this one —
+ * same line items, minus the postage line and minus `payment_intent_data.shipping` — so driving the
+ * physical path is the only version of this test that puts an address in front of Stripe's own
+ * validation. Its cost is nine fields of form filling in markup this repo controls. The digital
+ * branch's own coverage is the test above, which needs no key and therefore actually runs.
+ *
+ * THE TRAP WHEN RUNNING IT LOCALLY: `playwright.config.ts` sets `reuseExistingServer: !CI`, so an
+ * `apps/api/src/dev-e2e.ts` already running from before you exported the key keeps its
+ * `sk_test_dummy` while this process sees the real one. The test then unskips against an API that
+ * cannot pay, and the 502 assertion below is worded to say so rather than to time out on a
+ * navigation that was never going to happen.
+ */
 test('checkout reaches Stripe', async ({ page }) => {
-  test.skip(true, 'v1 web checkout is incompatible with the v2 API; re-enabled in PR 5')
-  await page.goto('/')
+  test.skip(!REAL_STRIPE_TEST_KEY, 'needs a real Stripe test key in STRIPE_SECRET_KEY (sk_test_…, not sk_test_dummy)')
+
+  await bagAndCheckout(page, 'handwritten-letter', 'Exhibit 001 — Carta escrita à mão')
+
+  await page.getByLabel('Nome completo').fill('Compra de teste')
+  await page.getByLabel('E-mail').fill('e2e@example.com')
+  await page.getByLabel('Telefone / WhatsApp').fill('+5531999990000')
+  // Filled rather than left to `DEFAULT_COUNTRY`: this test states the preconditions it depends on,
+  // and which country the form starts on belongs to the container's own tests.
+  await page.getByLabel('País').fill('BR')
+  await page.getByLabel('CEP').fill('30150-904')
+  await page.getByLabel('Rua / logradouro').fill('Rua da Bahia')
+  await page.getByLabel('Número').fill('100')
+  await page.getByLabel('Bairro').fill('Centro')
+  await page.getByLabel('Cidade').fill('Belo Horizonte')
+  await page.getByLabel('Estado').fill('MG')
+  await page.getByRole('radio', { name: /Correios PAC/ }).check()
+
+  // THE POSTAGE IS ON THE BILL BEFORE ANYTHING LEAVES THE BROWSER: R$ 50,00 for the letter plus
+  // R$ 22,00 of PAC. Chosen over the R$ 50,00 the page showed a moment ago precisely because the
+  // two differ — a summary that ignored the radio would still read R$ 50,00 and still reach Stripe.
+  const pay = page.getByRole('button', { name: /^Pagar/ })
+  await expect(pay).toHaveAccessibleName(/^Pagar R\$\s*72,00$/)
+
+  const answer = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/api/checkout'), {
+    timeout: 20000,
+  })
+  await pay.click()
+  const response = await answer
+  expect(
+    response.status(),
+    'POST /api/checkout did not answer 200. A 502 is STRIPE_UNAVAILABLE: the API process is on a different STRIPE_SECRET_KEY than this one — usually a dev-e2e server left running from before the key was exported.',
+  ).toBe(200)
+
+  // The destination, which is the whole point: the browser can only be here because the API asked
+  // Stripe for a session, Stripe issued one, and `window.location.assign` followed the URL it
+  // answered with. The response body is deliberately not read — it is being read across a
+  // navigation the click already started, which is a race, and landing here proves what it said.
+  await page.waitForURL(/^https:\/\/checkout\.stripe\.com\//, { timeout: 20000 })
 })
