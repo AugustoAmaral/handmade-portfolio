@@ -29,13 +29,15 @@ import { useTranslation } from 'react-i18next'
  * prototype's `opacity:.55` does not clear them — 3.82:1 at 11px against a 4.5:1 floor — so they
  * sit at 65%, 5.26:1, as every other muted mono label on this branch now does.
  *
- * NOT BUILT ON THE `Stat` PRIMITIVE, which PR 2 shipped for this exact band (its own story renders
- * `value: '4', label: 'peças no catálogo'`) and which matches this cell to the pixel. `Stat` is a
- * pair of `<div>`s in flow order, and what this band needs is a `<dt>`/`<dd>` pair in the reverse
- * one. Extending it would give a primitive an emit-a-`<dd>` mode that is only valid inside a
- * `<dl>` and that flips its own DOM order — a primitive whose correctness depends on its parent.
- * The cost is two duplicated class strings; the branch sweep should decide whether `Stat` becomes
- * this or gets deleted, because as of this task it has no consumer.
+ * NOT BUILT ON THE `Stat` PRIMITIVE PR 2 SHIPPED FOR THIS EXACT BAND — its story rendered
+ * `value: '4', label: 'peças no catálogo'` and it matched this cell to the pixel, but it was a
+ * pair of `<div>`s in flow order and what this band needs is a `<dt>`/`<dd>` pair in the reverse
+ * one. The branch sweep deleted it rather than extend it, and the third option is the one worth
+ * writing down: a self-contained `<dl>` per cell would have been valid HTML and parent-independent,
+ * but it fragments one band of four facts into four one-item lists, which is a worse thing to hear
+ * read out than the two duplicated class strings below are to maintain. The band's semantics are
+ * needed by this page; the primitive was needed by nothing — PR 4's admin is a login, a table, a
+ * form and an order list, with no facts band anywhere in it.
  *
  * The copy lives here rather than in a `facts` prop for the reasons written out in `AboutBlocks`,
  * and no `lang` prop for the same reason: nothing in this band comes from the catalogue.

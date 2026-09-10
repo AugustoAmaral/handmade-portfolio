@@ -13,7 +13,8 @@ import { FieldLabel, TextInput } from '../primitives'
  * that promoting the About tag to a heading reddens `heading-order` on that page — six headings
  * where three belong. A primitive that must emit a heading in one caller and must not in another
  * is a primitive whose correctness depends on its parent, which is the argument `AboutFacts`
- * already used to refuse building on `Stat`. So the shape lives beside its five callers instead,
+ * already used to refuse the stat primitive PR 2 shipped for it — a refusal the branch sweep
+ * settled by deleting that primitive. So the shape lives beside its five callers instead,
  * and `Eyebrow` keeps one job.
  *
  * The prototype's tag is `opacity:.55`, which is 3.82:1 on paper against a 4.5:1 floor. 65% is
