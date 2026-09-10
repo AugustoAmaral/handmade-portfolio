@@ -4,7 +4,7 @@ import { FieldLabel, Select, TextInput } from '../primitives'
 import { useFieldError } from '../shop/CheckoutSection'
 
 /**
- * What the five identifier fields hold WHILE THEY ARE BEING TYPED, which is not what the API
+ * What the six identifier fields hold WHILE THEY ARE BEING TYPED, which is not what the API
  * stores. `price` and `stock` are the raw text in the box, because a controlled field that round
  * trips through a number cannot hold `19,` long enough for the `9` after it to arrive — the
  * separator is erased on the keystroke that produced it. The conversions below are the edge, and
@@ -20,6 +20,13 @@ export interface ProductBasicsValues {
   /** The box that produces `stock: null` — no limit — which is a different fact from a count of 0. */
   unlimitedStock: boolean
   type: 'physical' | 'digital'
+  /**
+   * The piece the shop's home page leads with. A SINGLE-WINNER FLAG WITH NO UNIQUENESS CONSTRAINT:
+   * `productInputSchema` is `z.boolean().default(false)` and neither the Mongoose model nor
+   * `routes/admin/products.ts` holds it to one document, so this is the answer for ONE product and
+   * never the answer for the catalogue. The shop resolves the tie itself (spec:58).
+   */
+  featured: boolean
   active: boolean
 }
 
@@ -29,7 +36,7 @@ export interface ProductBasicsFieldsProps {
   lang: 'pt' | 'en'
   /** Keyed as `productInputSchema` names the fields: `slug`, `priceCents`, `stock`. */
   errors: FieldErrors
-  /** The whole object, not a field/value pair: five fields of four different types would need a
+  /** The whole object, not a field/value pair: six fields of four different types would need a
    * generic the story's mocks cannot express, and the container's job is a single assignment. */
   onChange(values: ProductBasicsValues): void
 }
@@ -120,6 +127,7 @@ export function basicsFromProduct(product: PublicProduct): ProductBasicsValues {
     stock: product.stock === null ? '' : String(product.stock),
     unlimitedStock: product.stock === null,
     type: product.type,
+    featured: product.featured,
     active: product.active,
   }
 }
@@ -135,6 +143,7 @@ export const EMPTY_BASICS: ProductBasicsValues = {
   stock: '',
   unlimitedStock: false,
   type: 'physical',
+  featured: false,
   active: false,
 }
 
@@ -143,9 +152,11 @@ const PRICE_ID = 'product-price'
 const STOCK_ID = 'product-stock'
 const TYPE_ID = 'product-type'
 const ACTIVE_ID = 'product-active'
+const FEATURED_ID = 'product-featured'
+const FEATURED_NOTE_ID = 'product-featured-note'
 
 /**
- * The product form's identifier row: the five fields that are the same in both languages.
+ * The product form's identifier row: the six fields that are the same in both languages.
  *
  * NO LANGUAGE OF ITS OWN TO PICK BETWEEN except the price floor. Every string here is a `t` key
  * resolved by the provider and nothing comes from the catalogue, so `lang` is carried for
@@ -164,7 +175,7 @@ const ACTIVE_ID = 'product-active'
  * content it considers invalid, so `1e` and `--` are indistinguishable from an empty field, and an
  * empty field is where a silent 0 comes from.
  *
- * THE 5 LABELS ARE `FieldLabel`, unmodified. The design draws them at `opacity:.75`, which is
+ * THE 6 LABELS ARE `FieldLabel`, unmodified. The design draws them at `opacity:.75`, which is
  * 7.39:1 on paper and which is what the primitive already is; the branch's "below opacity-65 fails
  * AA" rule is about the muted meta lines and does not apply to these.
  */
@@ -275,6 +286,60 @@ export function ProductBasicsFields({ values, lang, errors, onChange }: ProductB
           ]}
           onChange={(v) => set('active', v === 'active')}
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {/*
+          THE SIXTH FIELD. spec:46 lists it among the form's new ones and no task built it, so
+          until now the piece the home page leads with could only be chosen by editing the
+          document by hand.
+
+          A SELECT AND NOT A BOX, because this row already decided that for a boolean: `active` is
+          one and it is a Select with both states named. The reason applies twice over here — the
+          off state is not "hidden", it is "in the catalogue like everything else", which a bare
+          box leaves unsaid. The checkbox two cells over is a SECOND control inside a field that
+          already has one, which is a different problem with a different answer.
+
+          THE SENTENCE UNDER THE CONTROL IS THE WHOLE DESIGN OF THIS CELL, and it is there because
+          the two option words cannot carry it. `featured` is a single-winner flag WITH NO
+          UNIQUENESS CONSTRAINT ANYWHERE: not in `productInputSchema`, not in the Mongoose model,
+          not in the PUT. The shop breaks the tie by taking the first ACTIVE product carrying it,
+          in catalogue order (spec:58) — so
+          marking a second piece does not move the hero, it silently joins a queue. A field
+          labelled `Destaque` would promise a guarantee the backend does not make; naming the
+          field for the home page and stating the rule under it promises only what happens.
+
+          ENFORCING THE GUARANTEE FROM HERE WAS THE ALTERNATIVE AND IT COSTS TWO WRITES. There is
+          no endpoint that clears the flag elsewhere, so the panel would have to PUT a second,
+          unopened product assembled from a cached copy — Task 8's whole-document hazard, aimed at
+          a product the reader never looked at — with a window in between where the shop has two
+          heroes or none, and no honest sentence to show when only the first write lands.
+        */}
+        <FieldLabel htmlFor={FEATURED_ID}>{t('Home page')}</FieldLabel>
+        <Select
+          id={FEATURED_ID}
+          describedBy={FEATURED_NOTE_ID}
+          value={values.featured ? 'marked' : 'unmarked'}
+          options={[
+            { value: 'marked', label: t('Marked') },
+            { value: 'unmarked', label: t('Not marked') },
+          ]}
+          onChange={(v) => set('featured', v === 'marked')}
+        />
+        {/*
+          A DESCRIPTION AND NOT A LABEL HINT, which is where this sentence started. Inside the
+          label it became part of the control's NAME and wrapped to three lines in a 179px cell,
+          leaving this select sitting 30px below the five controls beside it — the row stops
+          reading as a row. As a description it is announced after the name, it sits under the
+          control where the stock cell puts its second line, and the label above stays one line
+          like its neighbours.
+
+          `opacity-65` is the branch's muted-note level and its floor: the same 65% the form's two
+          other notes use, measured rather than assumed in the stories beside this file.
+        */}
+        <p id={FEATURED_NOTE_ID} className="font-mono text-[10px] leading-[1.5] tracking-[0.04em] opacity-65">
+          {t('The home page opens with the first active piece marked here.')}
+        </p>
       </div>
     </div>
   )

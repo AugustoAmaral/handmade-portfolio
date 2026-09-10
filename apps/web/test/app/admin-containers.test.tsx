@@ -568,6 +568,56 @@ describe('ProductFormRoute', () => {
     expect(await screen.findByText('Produto salvo.')).toBeInTheDocument()
   })
 
+  it('marks a piece for the home page, and leaves the shop switch beside it alone', async () => {
+    // THE HALF THE PLAN DROPPED. Task 8 pinned the CARRY-THROUGH — a save must not unfeature the
+    // hero — but nothing could set the flag, so `featured` was reachable only by editing the
+    // database by hand. `drawing` is the fixture that makes this assertion mean something: it is
+    // ACTIVE and NOT featured, so a control reading `active` would show it as marked and a save
+    // built from `active` would send `true` for a piece that carries `false`.
+    signedIn()
+    const spy = stubFetch((url, init) => {
+      if (init?.method === 'PUT') return json({ product: { ...drawing, featured: true } })
+      return catalogue()
+    })
+    renderAdmin('/admin/products/p-drawing')
+
+    const featured = await screen.findByLabelText('Página inicial')
+    expect(featured).toHaveValue('unmarked')
+    expect(screen.getByLabelText('Situação')).toHaveValue('active')
+
+    await userEvent.selectOptions(featured, 'marked')
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar produto' }))
+
+    await waitFor(() => expect(calls(spy, 'PUT')).toHaveLength(1))
+    const put = bodyOf(calls(spy, 'PUT')[0]!)
+    expect(put['featured']).toBe(true)
+    // The other boolean in the row, untouched. Two adjacent selects over the same two shapes is
+    // exactly where a handler writing the wrong key would still look right on screen.
+    expect(put['active']).toBe(true)
+  })
+
+  it('takes the mark off the piece that carries it', async () => {
+    // The other direction, on the other fixture: `letter` is the only featured product, and
+    // `productUpdateSchema` defaults `featured` to false — so a form that simply STOPPED sending
+    // the key would pass this test while failing the one above it. The pair is what pins the
+    // value as sent rather than as defaulted.
+    signedIn()
+    const spy = stubFetch((url, init) => {
+      if (init?.method === 'PUT') return json({ product: { ...letter, featured: false } })
+      return catalogue()
+    })
+    renderAdmin('/admin/products/p-letter')
+
+    const featured = await screen.findByLabelText('Página inicial')
+    expect(featured).toHaveValue('marked')
+
+    await userEvent.selectOptions(featured, 'unmarked')
+    await userEvent.click(screen.getByRole('button', { name: 'Salvar produto' }))
+
+    await waitFor(() => expect(calls(spy, 'PUT')).toHaveLength(1))
+    expect(bodyOf(calls(spy, 'PUT')[0]!)['featured']).toBe(false)
+  })
+
   it('reseeds the photo list from the upload’s answer, so the next save is not a 400', async () => {
     // Task 5's finding, and the one the plan says costs a `{ photos: ['must_match_existing'] }`:
     // adding a photo is an IMMEDIATE server call that answers with the WHOLE product, while the

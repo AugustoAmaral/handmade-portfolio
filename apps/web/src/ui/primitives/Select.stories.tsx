@@ -6,6 +6,7 @@ import { Select } from './Select'
 import { contrast, parseColor, surfaceBehind } from '../../../.storybook/contrast'
 
 const LABEL = 'Forma de envio'
+const NOTE = 'A retirada só vale para Belo Horizonte.'
 
 const OPTIONS = [
   { value: 'sedex', label: 'Sedex' },
@@ -43,6 +44,38 @@ export const Default: Story = {
   play: async ({ canvas, args }) => {
     await userEvent.selectOptions(canvas.getByLabelText(LABEL), 'pac')
     await expect(args.onChange).toHaveBeenCalledWith('pac')
+  },
+}
+
+/**
+ * THE DESCRIPTION IS NOT THE NAME, which is the whole reason the prop exists. A field whose two
+ * option words cannot say what choosing them does needs a sentence, and a sentence folded into the
+ * label becomes part of the accessible NAME — spoken every time the control is reached, and laid
+ * out as label text, which is how the admin's home-page field ended up three lines tall with its
+ * control dropped below the row.
+ *
+ * Both halves are asserted because either one alone passes on the wrong markup: a name-only check
+ * is green when the sentence is missing entirely, and a description-only check is green when the
+ * sentence has swallowed the label.
+ */
+export const DescribedByANote: Story = {
+  args: { describedBy: 'shipping-note' },
+  render: function Render(args) {
+    const [value, setValue] = useState(args.value)
+    return (
+      <div className="flex max-w-xs flex-col gap-2">
+        <FieldLabel htmlFor={args.id}>{LABEL}</FieldLabel>
+        <Select {...args} value={value} onChange={setValue} />
+        <p id="shipping-note" className="font-mono text-[10px] opacity-65">
+          {NOTE}
+        </p>
+      </div>
+    )
+  },
+  play: async ({ canvas }) => {
+    const select = canvas.getByLabelText(LABEL)
+    await expect(select).toHaveAccessibleName(LABEL)
+    await expect(select).toHaveAccessibleDescription(NOTE)
   },
 }
 

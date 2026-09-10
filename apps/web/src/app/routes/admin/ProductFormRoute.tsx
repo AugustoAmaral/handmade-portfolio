@@ -97,13 +97,6 @@ export function ProductFormRoute() {
   // The design seeds a brand-new product with one blank row, and `specsForSubmit` drops it again.
   const [specs, setSpecs] = useState<SpecDraft[]>([EMPTY_SPEC])
   const [photos, setPhotos] = useState<PhotoDraft[]>([])
-  /**
-   * NOT ON THE FORM AND STILL SENT. `featured` decides which piece the shop's home page leads with
-   * and there is no control for it anywhere in the panel — but `productUpdateSchema` defaults it to
-   * `false`, and the PUT replaces the document, so a body that left it out would unfeature the
-   * piece every time it was saved. Held from the product it was seeded with.
-   */
-  const [featured, setFeatured] = useState(false)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
   const [saved, setSaved] = useState(false)
@@ -132,7 +125,6 @@ export function ProductFormRoute() {
     const rows = specsFromProduct(source)
     setSpecs(rows.length > 0 ? rows : [EMPTY_SPEC])
     setPhotos(photosFromProduct(source))
-    setFeatured(source.featured)
   }
 
   function seedBlank() {
@@ -141,7 +133,6 @@ export function ProductFormRoute() {
     setLocalized(EMPTY_LOCALIZED)
     setSpecs([EMPTY_SPEC])
     setPhotos([])
-    setFeatured(false)
   }
 
   // Adjusted DURING the render, React's own answer for state derived from a prop, rather than in an
@@ -187,7 +178,13 @@ export function ProductFormRoute() {
       // "stock: Required" rather than "leave it alone".
       stock: stockFrom(basics),
       specs: specsForSubmit(specs),
-      featured,
+      // ON THE FORM SINCE TASK 8b, and still always sent for the reason it was sent before there
+      // was a control: `productUpdateSchema` defaults it to `false` and the PUT replaces the whole
+      // document, so a body that omitted the key would unfeature the shop's home piece on every
+      // save. It rides in `basics` because it is seeded, edited and submitted with the other five
+      // identifier fields; the table's own toggle assembles its body from `productInputFrom`,
+      // which is a different path and untouched.
+      featured: basics.featured,
       active: basics.active,
       // Only on update. On create there is no id to key an R2 object by, and the API parses the
       // body with `productInputSchema`, which strips the field.
@@ -214,7 +211,6 @@ export function ProductFormRoute() {
           // upload a photo against. Adopting the identity BEFORE navigating is what stops the new
           // URL from reading as an unseeded one and bouncing to the table while the list catches up.
           setSeededFor(created.id)
-          setFeatured(created.featured)
           setPhotos(photosFromProduct(created))
           navigate(routes.adminProduct(created.id), { replace: true })
         },

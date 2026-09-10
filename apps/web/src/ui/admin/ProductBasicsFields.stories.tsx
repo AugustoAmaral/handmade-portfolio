@@ -2,7 +2,7 @@ import { type FieldErrors, fieldErrorsFromIssues, productInputSchema } from '@sh
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 import { expect, fn, userEvent } from 'storybook/test'
-import { digitalLetter, drawing, letter, soldOutDrawing } from '../../fixtures/products'
+import { digitalLetter, drawing, inactiveGuide, letter, soldOutDrawing } from '../../fixtures/products'
 import { measure, opacityOf } from '../../../.storybook/contrast'
 import {
   EMPTY_BASICS,
@@ -32,6 +32,7 @@ function inputFrom(basics: ProductBasicsValues, localized: ProductLocalizedValue
     priceCents: centsFromReais(basics.price),
     stock: stockFrom(basics),
     type: basics.type,
+    featured: basics.featured,
     active: basics.active,
     ...localized,
   }
@@ -150,6 +151,88 @@ export const SoldOutIsNotUnlimited: Story = {
 }
 
 /**
+ * THE PIECE THE HOME PAGE LEADS WITH — the row's sixth field, listed at spec:46 and built by no
+ * task until now. `featured` was reachable only by editing the database by hand: the container
+ * carried it through every save untouched precisely because nothing on the screen could set it.
+ *
+ * WHAT IS ASSERTED IS THE FLAG, NOT THE OUTCOME, and the label says the same thing. The shop
+ * resolves its hero as the FIRST ACTIVE product carrying this flag (spec:58), which is a fact
+ * about the whole catalogue; a form editing one product cannot know it and does not claim to.
+ * Nothing in `productInputSchema`, in the Mongoose model or in `routes/admin/products.ts` holds
+ * this to one product, so a second piece marked here does not move the hero — it joins a queue
+ * the shop breaks by catalogue order. The hint is that sentence, short enough to sit in a label.
+ *
+ * THE NAME AND THE DESCRIPTION ARE ASSERTED APART, which is the whole point of the sentence being
+ * a description: `Página inicial` names the field and the rule is announced after it, instead of
+ * being folded into the name — where it also wrapped to three lines and dropped the control below
+ * the five beside it.
+ */
+export const MarksTheHomePagePiece: Story = {
+  play: async ({ canvas }) => {
+    const featured = canvas.getByLabelText('Página inicial')
+    await expect(featured).toHaveValue('marked')
+    await expect(featured).toHaveAccessibleName('Página inicial')
+    await expect(featured).toHaveAccessibleDescription(
+      'A página inicial abre com a primeira peça ativa marcada aqui.',
+    )
+    await expect(canvas.getByRole('option', { name: 'Marcada' })).toBeInTheDocument()
+    await expect(canvas.getByRole('option', { name: 'Não marcada' })).toBeInTheDocument()
+
+    // THE ROW HAS TO STILL READ AS A ROW, and this is the line that pays for the sentence being a
+    // description instead of a label hint. In the label it wrapped to three lines inside a 179px
+    // grid cell and pushed this control 30px below the five beside it — measured, not guessed.
+    // The cell is allowed to be TALLER (the note hangs under the control, as the stock box does);
+    // what it may not do is start its control lower.
+    const status = canvas.getByLabelText('Situação')
+    await expect(featured.getBoundingClientRect().top).toBe(status.getBoundingClientRect().top)
+  },
+}
+
+/**
+ * MARKED IS NOT ACTIVE, which is the coincidence this field is easiest to fake with: `letter` is
+ * the branch's featured fixture AND its most active one, so a control wired to `active` reads
+ * correctly on it and is wrong everywhere else. This is `letter` WITH THE SHOP SWITCH OFF — a
+ * state the panel really can be in, the hero piece pulled out of the catalogue for a week — and
+ * the flag has to survive it, because the document still carries it and the next `active` puts
+ * the piece straight back on the home page.
+ *
+ * The seeder is checked in the other direction on the two fixtures whose `active` disagrees:
+ * `drawing` is active and unmarked, `inactiveGuide` is neither. Between the three, no reading of
+ * `active` — nor of its negation — produces these answers.
+ */
+export const MarkedIsNotActive: Story = {
+  args: { values: { ...basicsFromProduct(letter), active: false } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('Página inicial')).toHaveValue('marked')
+    await expect(canvas.getByLabelText('Situação')).toHaveValue('inactive')
+
+    await expect(basicsFromProduct(drawing).featured).toBe(false)
+    await expect(basicsFromProduct(drawing).active).toBe(true)
+    await expect(basicsFromProduct(inactiveGuide).featured).toBe(false)
+    await expect(basicsFromProduct(inactiveGuide).active).toBe(false)
+  },
+}
+
+/**
+ * The control half: both directions, and the round trip back to the fixture's own value. The
+ * `Situação` line is not decoration — the two booleans are adjacent selects with the same two
+ * shapes, and a handler that wrote the wrong key would leave this story's own field looking right.
+ */
+export const ChangesTheHomePagePiece: Story = {
+  play: async ({ args, canvas }) => {
+    const featured = canvas.getByLabelText('Página inicial')
+    await userEvent.selectOptions(featured, 'unmarked')
+
+    await expect(args.onChange).toHaveBeenLastCalledWith({ ...basicsFromProduct(letter), featured: false })
+    await expect(featured).toHaveValue('unmarked')
+    await expect(canvas.getByLabelText('Situação')).toHaveValue('active')
+
+    await userEvent.selectOptions(featured, 'marked')
+    await expect(args.onChange).toHaveBeenLastCalledWith(basicsFromProduct(letter))
+  },
+}
+
+/**
  * A new draft: every box empty, and INACTIVE. A piece with no photos and no English copy has no
  * business appearing in the shop the moment it is saved, and one click publishes it on purpose.
  */
@@ -161,6 +244,10 @@ export const NewProduct: Story = {
     await expect(canvas.getByRole('textbox', { name: /Preço/ })).toHaveValue('')
     await expect(canvas.getByRole('checkbox')).not.toBeChecked()
     await expect(canvas.getByLabelText('Situação')).toHaveValue('inactive')
+    // A draft nobody has saved cannot be the piece the home page leads with, and the two booleans
+    // in this row start on opposite words: `inactive` reads as the off state, `unmarked` as the on
+    // one, which is what keeps a default copied from the wrong field visible here.
+    await expect(canvas.getByLabelText('Página inicial')).toHaveValue('unmarked')
   },
 }
 
@@ -371,6 +458,10 @@ export const InEnglish: Story = {
     await expect(canvas.getByRole('checkbox')).toHaveAccessibleName('Unlimited')
     await expect(canvas.getByRole('option', { name: 'Physical' })).toBeInTheDocument()
     await expect(canvas.getByRole('option', { name: 'Active' })).toBeInTheDocument()
+    await expect(canvas.getByRole('option', { name: 'Not marked' })).toBeInTheDocument()
+    await expect(canvas.getByLabelText('Home page')).toHaveAccessibleDescription(
+      'The home page opens with the first active piece marked here.',
+    )
     // The floor follows the language through `formatPrice`, which is why it is not a copy string.
     await expect(canvas.getByText('minimum R$1.00')).toBeInTheDocument()
   },
@@ -406,6 +497,16 @@ export const MeasuresItsLabels: Story = {
     const slug = canvas.getByLabelText('Identificador')
     await expect(measure(label, 'color')).toBeLessThan(measure(slug, 'color'))
     await expect(measure(hint, 'color')).toBeLessThan(measure(label, 'color'))
+
+    // The row's one full sentence, and the only thing on it drawn at the branch's muted level
+    // rather than at the label's. 65% is the floor that level is allowed to reach — 60% measures
+    // 4.47:1 and fails — so the number is asserted as well as the ratio, and the relational line
+    // is what catches arithmetic that errs HIGH: dropping the alpha compositing out of `over()`
+    // leaves a one-sided `>= 4.5` green while reporting muted ink as more legible than it is.
+    const note = canvas.getByText('A página inicial abre com a primeira peça ativa marcada aqui.')
+    await expect(opacityOf(note)).toBeCloseTo(0.65, 5)
+    await expect(measure(note, 'color')).toBeGreaterThanOrEqual(4.5)
+    await expect(measure(note, 'color')).toBeLessThan(measure(canvas.getByLabelText('Página inicial'), 'color'))
 
     const unlimited = canvas.getByRole('checkbox')
     await expect(opacityOf(unlimited)).toBe(1)
