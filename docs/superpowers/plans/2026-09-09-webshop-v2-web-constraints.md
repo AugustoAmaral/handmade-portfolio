@@ -35,6 +35,9 @@ Almost every line below was **measured**, usually because something written from
 - Commits in English, conventional-commit noun-phrase subjects, **no trailers** (no `Co-Authored-By`, no `Claude-Session`). The branch below has zero across 47 commits; keep it that way.
 - Code, comments, tests and story names in English. Only `pt.json` values and fixture content are pt-BR.
 
+- **A react-query key test needs ONE cache, or it is testing nothing.** PR 4 Task 1 wrote "caches each filter separately" with two `render()` calls, each building its own `QueryClient` — so both hooks fetched regardless of what the key said, and the test proved nothing. Share one client across the renders, and prove it with a mutation that collapses the key to a constant.
+- **`res.json()` rejects on an empty body**, so a `204` endpoint only works because `client.ts` wraps the parse in `.catch(() => ({}))` — which was written for HTML 502s from a proxy and covers the success path by accident. `DELETE /api/admin/products/:id` is the only 204 on the branch. Do not remove that catch.
+
 ## What is NOT here
 
 Anything true of one PR only: its branch name, its file map, its wipe list, the states its own screens need. Each plan declares those itself. If a rule below stops being true for a later PR, amend it here with the measurement — do not fork it into that plan, which is the failure this file exists to prevent.

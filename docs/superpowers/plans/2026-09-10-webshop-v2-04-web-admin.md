@@ -36,12 +36,26 @@
 - **The order detail's CPF row is deleted.** The prototype's fixtures carry `["CPF", "042.118.***-**"]` on all four orders and render it as the third of four contact rows — but spec decision 3 removed CPF from the checkout, so it is never collected. **A field that is never collected cannot be displayed.** Drop the row.
 - **Pix/boleto vocabulary** appears in the orders fixture (`"Stripe · boleto"`, `"Stripe · Pix"`) and must not be transcribed — card only, spec decision 2.
 - **The i18n key collision is real and needs a shape, not a workaround.** The form's PT and EN columns label their fields in the language of the column (`Nome`/`Name`, `Descrição`/`Description`, `Chave`/`Key`). Under this project's rule — the key IS the English sentence, one instance — both columns collapse to `Name`. The design already shows the answer in `Alt (PT)` / `Alt (EN)`: **key them `Name (PT)` / `Name (EN)`** and so on. Anything else either duplicates a key or lies about which field is which.
-- **`∞` is a symbol with no accessible name.** Whatever it renders as visually, a screen reader must hear "made to order" or equivalent.
+- **`∞` is a symbol with no accessible name, and its name CANNOT be a constant.** ⚠️ Corrected by Task 1: `stock === null` means "no limit", and what that limit means depends on the type. For a physical piece it is made to order; **for a digital product it is simply unlimited** — `digitalLetter` in the fixtures is exactly that shape, and naming it "made to order" would have the admin read "made to order" on a PDF. The accessible name branches on `type`.
 - **The four spec inputs have no labels at all** — placeholder only, which is 16 axe violations on a four-spec product and the densest accessibility problem in the admin.
 - **The prototype's `save()` IS the validation**, and it is not validation: an empty slug becomes the literal string `sem-identificador`, a non-numeric price becomes `0`, and there is no uniqueness check — a new draft whose slug matches an existing id concatenates into two records with the same id. Its own header says "Os dois idiomas são obrigatórios" and nothing enforces it. **Validate against `productInputSchema`**, which already exists.
 - **Two states, three words:** the table says `Ativo`/`Inativo` and the form's select says `Ativo na loja`/`Desabilitado`. Pick one pair.
 - **The orders list has no selected state at all** — `o.select` writes `state.order` and nothing reads it. Since selection lives in the URL (`?order=`), the selected row needs a visible and announced state that the design does not provide.
 - **The orders list column carries an unconditional `border-right`**, the same dangling edge the shop's two heroes had. PR 3 fixed those with the hairline grid rather than a media query; do the same.
+
+## API facts measured in Task 1, read from the route source
+
+Every envelope was confirmed in `apps/api/src/routes/admin/*.ts`. Five shapes are traps for later tasks:
+
+1. **Both photo endpoints answer with the whole PRODUCT**, not the photo — `toPublicProduct(doc)` after the push or filter. Task 5 must not expect a photo-shaped object back.
+2. **`DELETE /api/admin/products/:id` is a 204 with no body**, the only one on the branch, and it works only because `client.ts` catches the JSON parse failure.
+3. **`GET /api/admin/orders` has THREE filter modes, not two:** `all` → no filter, a named status → that status, **absent** → everything except `expired`. Absent is not a synonym for `all`, and it must be genuinely absent: the parser is `.optional()`, so `?status=` (empty) is a 400.
+4. **`trackingCode` is `.optional()`, which means absent — not empty.** Sending `''` 400s a shipment that is otherwise legal, and blank is the normal case for something handed over in person. Trim and omit.
+5. **The admin list returns `PublicProduct`** — there is no `AdminProduct` type and no `createdAt`, so a "newest first" column is not available without an API change.
+
+**Three `productInputSchema` details Task 4 will trip on:** `stock` is `nullable()` but **not** `optional()`, so the form must always send it; `priceCents` has a **minimum of 100** (R$ 1,00), which the price field needs as a floor; and `subtitle`'s `.default()` fires only when subtitle is entirely absent — `{ pt: 'x' }` alone is a ZodError, because both keys are required (empty strings allowed). The same trap applies to photo `alt` in the PUT. **`specs` is capped at 12.**
+
+**An oversized photo upload is a 500, not a 4xx.** `multer` throws a `MulterError`, which is neither `AppError` nor `ZodError`, so `errorHandler` falls through to `500 INTERNAL`. Nothing in the API handles it. Task 5 cannot show a useful message for the most likely upload failure; the fix is API-side and out of this PR's scope, but do not design around a 4xx that never arrives.
 
 ## Contrast: the paper rules do not apply inside the dark bar
 
@@ -116,7 +130,7 @@ Each task follows the pattern PR 3 settled into, which is not restated per task:
 
 **What each task owns, and the decisions it must make rather than defer:**
 
-**Task 1 — `useAdminSession` and the admin hooks.** The session is a token in `localStorage`, so it has the same shape as `useCart`: validated on read, because a stored value survives deploys. Decide what happens when the token is present but the API answers 401 — the guard cannot distinguish "expired" from "never valid" without asking, and a redirect loop is the failure mode. The hooks: `useAdminProducts`, `useAdminOrders(status)`, `useSaveProduct`, `useDeleteProduct`, `useUploadPhoto`, `useDeletePhoto`, `useMarkShipped`. **Check the response envelopes against `apps/api/src/routes/admin*.ts` rather than assuming** — PR 3 shipped a hook layer that never unwrapped `{ products }` and it survived ten tasks because it had no consumer.
+**Task 1 — `useAdminSession` and the admin hooks.** The session is a token in `localStorage`, so it has the same shape as `useCart`: validated on read, because a stored value survives deploys. Decide what happens when the token is present but the API answers 401 — the guard cannot distinguish "expired" from "never valid" without asking, and a redirect loop is the failure mode. The hooks: **`useAdminLogin`** (missing from the draft — without it the login container would call `api()` directly, which no container on the branch does), `useAdminProducts`, `useAdminOrders(status?)`, `useSaveProduct`, `useDeleteProduct`, `useUploadPhoto`, `useDeletePhoto`, `useMarkShipped`. **Check the response envelopes against `apps/api/src/routes/admin*.ts` rather than assuming** — PR 3 shipped a hook layer that never unwrapped `{ products }`, and it survived ten tasks because it had no consumer. (That bug was repaired on the branch; the lesson is the durable part, not the defect.)
 
 **Task 2 — `AdminHeader`, `LoginCard`.** The header is the design's dark bar: ink background, paper text, which inverts every contrast ratio the branch has measured. Measure it. `LoginCard` is a real `<form>` with a submit button inside it, so it gets Enter for free — unlike the checkout, which needed the `form` attribute.
 
@@ -130,7 +144,7 @@ Each task follows the pattern PR 3 settled into, which is not restated per task:
 
 **Task 7 — the pages.** `AdminShell` owns the header and the single `<main>`. Heading outlines matter again; `heading-order` needs three headings to fire.
 
-**Task 8 — containers and the guard.** `AdminShellContainer` holds the session and renders `<Outlet/>`; an unauthenticated visit renders the login rather than redirecting, so a deep link survives signing in. The product form is the branch's most stateful container.
+**Task 8 — containers and the guard. It carries one inherited obligation, stated by Task 1 rather than discovered later:** nothing yet proves that a 401 out of `useAdminProducts` actually reaches `endIfRejected`. `useAdminSession` has no consumer until this task, which is precisely the shape of the PR 3 defect — a layer with strong unit tests and no wiring test. **Write that test; do not assume it.** `AdminShellContainer` holds the session and renders `<Outlet/>`; an unauthenticated visit renders the login rather than redirecting, so a deep link survives signing in. The product form is the branch's most stateful container.
 
 **Task 9 — routes, e2e, sweep.** Add the admin routes to `App.tsx` and update its comment. **Restore the e2e admin test** — the seed's admin credentials are in `apps/api/src/dev-e2e.ts`. Then sweep: unfailable assertions, story coverage against the spec's five admin rows, `pt.json` keys with no caller (PR 3 left several planted for this PR — they should now have real callers or be deleted), and props no supplier fills.
 
