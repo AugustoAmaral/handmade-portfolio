@@ -143,5 +143,16 @@
   "I could not load this piece.": "Não consegui carregar esta peça.",
   "This piece is not in the catalogue.": "Essa peça não está no catálogo.",
   "It may have been sold, or the address is wrong. The catalogue has everything that is for sale.": "Pode ter sido vendida, ou o endereço está errado. O catálogo tem tudo que está à venda.",
-  "Try again": "Tentar de novo"
+  "Try again": "Tentar de novo",
+  "Panel": "Painel",
+  "Products": "Produtos",
+  "Orders": "Pedidos",
+  "View the shop": "Ver a loja",
+  "Sign out": "Sair",
+  "Sign in to the panel": "Entrar no painel",
+  "Password": "Senha",
+  "Sign in": "Entrar",
+  "Signing in…": "Entrando…",
+  "That e-mail and password do not match.": "E-mail e senha não conferem.",
+  "Your session ended. Sign in again.": "Sua sessão terminou. Entre de novo."
 }

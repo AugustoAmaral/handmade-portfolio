@@ -5,8 +5,14 @@ interface Props {
   id: string
   value: string
   onChange: (value: string) => void
-  type?: 'text' | 'email' | 'tel' | 'number'
+  type?: 'text' | 'email' | 'tel' | 'number' | 'password'
   placeholder?: string
+  /**
+   * The HTML autofill token for what this field collects (`username`, `current-password`, `email`,
+   * …). WCAG 2.2 SC 1.3.5 asks for it on any field collecting information about the person filling
+   * it in, and on the admin login it is also what lets a password manager fill the pair at all.
+   */
+  autoComplete?: string
   error?: string
   disabled?: boolean
 }
@@ -29,7 +35,7 @@ interface Props {
 const FIELD =
   'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
 
-export function TextInput({ id, value, onChange, type = 'text', placeholder, error, disabled }: Props) {
+export function TextInput({ id, value, onChange, type = 'text', placeholder, autoComplete, error, disabled }: Props) {
   return (
     <>
       <input
@@ -37,6 +43,7 @@ export function TextInput({ id, value, onChange, type = 'text', placeholder, err
         type={type}
         value={value}
         placeholder={placeholder}
+        autoComplete={autoComplete}
         disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}
