@@ -13,6 +13,19 @@ interface Props {
    * it in, and on the admin login it is also what lets a password manager fill the pair at all.
    */
   autoComplete?: string
+  /**
+   * The accessible name, for a field that has no visible `<label htmlFor>` of its own or whose
+   * visible label repeats down a list. `Stepper` carries the same prop for the same reason: a cart
+   * drawer renders one per line and "Aumentar quantidade" three times over says nothing about
+   * which line it belongs to. The admin's spec rows are four unlabelled boxes twelve times over,
+   * which is the densest version of that problem on the branch.
+   *
+   * It WINS over a wrapping or associated `<label>`, so a caller that passes both is choosing to
+   * show one string and announce a longer one. That is legal under SC 2.5.3 only while the visible
+   * text is contained in the name — which is why every caller here builds the name by prefixing
+   * the visible words rather than replacing them.
+   */
+  label?: string
   error?: string
   disabled?: boolean
 }
@@ -35,7 +48,7 @@ interface Props {
 const FIELD =
   'font-mono border-ink bg-transparent w-full border px-3 py-3 text-[13px] focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent disabled:opacity-40'
 
-export function TextInput({ id, value, onChange, type = 'text', placeholder, autoComplete, error, disabled }: Props) {
+export function TextInput({ id, value, onChange, type = 'text', placeholder, autoComplete, label, error, disabled }: Props) {
   return (
     <>
       <input
@@ -44,6 +57,7 @@ export function TextInput({ id, value, onChange, type = 'text', placeholder, aut
         value={value}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        aria-label={label}
         disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-errormessage={error ? `${id}-error` : undefined}

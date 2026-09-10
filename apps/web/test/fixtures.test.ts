@@ -14,12 +14,23 @@ import {
   drawing,
   inactiveGuide,
   letter,
+  productWithMaxSpecs,
+  productWithThreePhotos,
   productWithoutPhotos,
   products,
   soldOutDrawing,
 } from '../src/fixtures/products'
 
-const allProducts = [letter, drawing, soldOutDrawing, digitalLetter, inactiveGuide, productWithoutPhotos]
+const allProducts = [
+  letter,
+  drawing,
+  soldOutDrawing,
+  digitalLetter,
+  inactiveGuide,
+  productWithoutPhotos,
+  productWithMaxSpecs,
+  productWithThreePhotos,
+]
 
 describe('fixtures', () => {
   it('ships four active products, one of them featured and one sold out', () => {
