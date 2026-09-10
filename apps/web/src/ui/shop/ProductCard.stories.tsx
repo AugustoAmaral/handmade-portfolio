@@ -70,3 +70,20 @@ export const Digital: Story = {
     await expect(canvas.getByText('Entrega por e-mail')).toBeInTheDocument()
   },
 }
+
+// FOUND BY MUTATION IN THE BRANCH SWEEP. `useAvailabilityLabel` opens with "THE ORDER OF THE
+// BRANCHES IS THE WHOLE THING" — `stock === 0` is tested before `type === 'digital'` so a digital
+// piece that ran out reads `Esgotado` rather than promising delivery of something nobody can buy —
+// and nothing proved it: no fixture and no seed row is digital AND out of stock, so the two
+// branches could be swapped and all four stories above stayed green. Spread rather than added to
+// `products.ts`, which is the supported way to vary a fixture (a new export escapes
+// `fixtures.test.ts`'s hand-maintained list).
+export const SoldOutBeatsDigital: Story = {
+  args: { product: { ...digitalLetter, stock: 0 } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('Esgotado')).toBeInTheDocument()
+    // The negative is the half that fails when the ladder is reordered; the positive alone is also
+    // true of a ladder that prints both labels.
+    await expect(canvas.queryByText('Entrega por e-mail')).toBeNull()
+  },
+}

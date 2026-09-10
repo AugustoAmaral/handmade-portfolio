@@ -144,3 +144,38 @@ export const InEnglish: Story = {
     await expect(valueOf(canvas, 'Estimated time').textContent).toBe(publicPaidOrder.eta!.en)
   },
 }
+
+// FOUND BY MUTATION IN THE BRANCH SWEEP. `confirmed` is `status !== 'pending'`, not
+// `status === 'paid'`, and only `paid` and `pending` had stories — so narrowing it to `paid` was a
+// mutation the whole suite survived. `shipped` is the status the ⚠️ block in `DonePage.tsx` names
+// as settled and correct, which is why it is the one pinned here: `oversold` and `expired` land on
+// this screen too, wrongly, and their copy is deliberately outstanding, so a story asserting what
+// they render today would cement the thing that block exists to keep visible.
+export const ShippedIsStillConfirmed: Story = {
+  args: { order: { ...publicPaidOrder, status: 'shipped' } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('heading', { level: 1 }).querySelector('em')?.textContent).toBe('Agora é minha vez.')
+    // The totals label is the second thing `confirmed` decides, and it is the one a buyer reads as
+    // a claim about their money.
+    await expect(valueOf(canvas, 'Total pago').textContent).toBe(formatPrice(publicPaidOrder.totalCents, 'pt'))
+  },
+}
+
+// FOUND BY MUTATION IN THE BRANCH SWEEP. `SHIPPING_METHODS[method].name[lang]` was unprovable:
+// every order fixture ships PAC or SEDEX, and both are `Correios PAC` / `Correios SEDEX` in BOTH
+// languages, so `name.pt` and `name.en` print the same characters and `InEnglish` above cannot
+// assert the `Envio` row at all. `intl` is the one method whose name is genuinely translated, so
+// it is the only fixture shape that can tell the two apart.
+export const InternationalShippingIsNamedInTheReadersLanguage: Story = {
+  args: {
+    lang: 'en',
+    order: { ...publicPaidOrder, shippingMethod: 'intl', eta: SHIPPING_METHODS.intl.eta },
+  },
+  globals: { locale: 'en' },
+  play: async ({ canvas }) => {
+    await expect(valueOf(canvas, 'Delivery').textContent).toBe('International (Correios)')
+    // Pinned against the Portuguese spelling by name rather than by absence: a row that rendered
+    // nothing would satisfy a `queryByText(...).toBeNull()` just as well.
+    await expect(valueOf(canvas, 'Delivery').textContent).not.toBe(SHIPPING_METHODS.intl.name.pt)
+  },
+}
