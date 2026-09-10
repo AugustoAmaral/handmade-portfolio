@@ -1,6 +1,6 @@
 import type { FieldErrors, PublicProduct } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
-import { FieldLabel, TextArea, TextInput } from '../primitives'
+import { FieldLabel, SectionRule, TextArea, TextInput } from '../primitives'
 import { useFieldError } from '../shop/CheckoutSection'
 
 /**
@@ -47,10 +47,10 @@ export const EMPTY_LOCALIZED: ProductLocalizedValues = {
  * One column. Its three labels are keyed with the language they belong to — `Name (PT)` and
  * `Name (EN)` — which is the whole shape of the fix; see the note on the component below.
  *
- * The heading is full-strength ink and NOT the checkout section's `opacity-65`. That 65% was a
- * correction of a `.55` the shop's prototype used for a muted tag; this heading is drawn at full
- * strength in the design and needs no correcting. Same reason the shape is written here rather
- * than imported from `CheckoutSection`, which is otherwise the same markup.
+ * The heading is `SectionRule`: full-strength ink and NOT the checkout section's `opacity-65`.
+ * That 65% was a correction of a `.55` the shop's prototype used for a muted tag; this heading is
+ * drawn at full strength in the design and needs no correcting. It was an inlined class string
+ * here until Task 5 needed the same header twice more and hoisted it into the primitive.
  */
 function LocalizedColumn({
   column,
@@ -73,9 +73,7 @@ function LocalizedColumn({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
-      <h2 id={headingId} className="font-mono border-ink border-b pb-[10px] text-[11px] uppercase tracking-[0.18em]">
-        {portuguese ? t('Portuguese') : t('English')}
-      </h2>
+      <SectionRule id={headingId}>{portuguese ? t('Portuguese') : t('English')}</SectionRule>
 
       <div className="flex flex-col gap-2">
         <FieldLabel htmlFor={nameId}>{portuguese ? t('Name (PT)') : t('Name (EN)')}</FieldLabel>
