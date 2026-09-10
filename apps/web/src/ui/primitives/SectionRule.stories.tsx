@@ -65,6 +65,19 @@ export const IsFullStrengthUnlikeAnEyebrow: Story = {
   },
 }
 
+/**
+ * THE ONE ALTERNATIVE LEVEL, for the admin order detail, whose pane is titled by the customer's
+ * name and whose sections are about that order rather than peers of it. Level 2 is still the
+ * default, so nothing written before this prop existed moved.
+ */
+export const NestedUnderAPaneTitle: Story = {
+  args: { level: 3, children: 'Entrega' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('heading', { level: 3, name: 'Entrega' })).toBeInTheDocument()
+    await expect(canvas.queryByRole('heading', { level: 2 })).toBeNull()
+  },
+}
+
 /** The action shares the rule rather than sitting under it, and it keeps its own semantics. */
 export const CarriesAnAction: Story = {
   args: {

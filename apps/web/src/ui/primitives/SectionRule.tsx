@@ -22,26 +22,37 @@ import { EYEBROW_TYPE } from './Eyebrow'
  * it sits outside the line the design draws under both. Baseline alignment is the design's too:
  * the action is not a second row.
  *
- * `<h2>` IS FIXED HERE, following Task 4. The admin page (Task 7) owns the `<h1>` and the outline;
- * every in-form section is a peer of every other, so a level prop would only ever be used to get
- * the outline wrong.
+ * `<h2>` WAS FIXED HERE AND NOW HAS ONE ALTERNATIVE, which is a correction to Task 5's note rather
+ * than a hedge against it. That note said a level prop "would only ever be used to get the outline
+ * wrong", and for the product form it was right: the page owns the `<h1>` and every in-form section
+ * is a peer of every other, so there is nothing for the sections to nest under.
+ *
+ * The order detail is the shape that does nest. Its pane is titled by the CUSTOMER'S NAME — an
+ * `<h2>` in the prototype and the only sensible title for a pane whose siblings are other people's
+ * orders — and `Entrega`, `Itens` and `Notas do cliente` are about that order, not peers of it. At
+ * one level they announce as siblings of the name, which tells a reader moving by heading that the
+ * delivery address belongs to the screen rather than to Marina. Two values, both of them a real
+ * position in a real outline; anything deeper would be the drift the original note was guarding.
  */
 export function SectionRule({
   id,
   children,
   action,
+  level = 2,
   className = '',
 }: {
   id?: string
   children: ReactNode
   action?: ReactNode
+  level?: 2 | 3
   className?: string
 }) {
+  const Heading = level === 3 ? 'h3' : 'h2'
   return (
     <div className={`border-ink flex flex-wrap items-baseline justify-between gap-4 border-b pb-2.5 ${className}`}>
-      <h2 id={id} className={EYEBROW_TYPE}>
+      <Heading id={id} className={EYEBROW_TYPE}>
         {children}
-      </h2>
+      </Heading>
       {action}
     </div>
   )

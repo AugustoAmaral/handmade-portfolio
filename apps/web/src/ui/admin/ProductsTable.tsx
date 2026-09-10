@@ -44,9 +44,11 @@ const MIN_TABLE_WIDTH = 'min-w-[734px]'
  * `+ Novo produto` belong to the page (Task 7), which owns the `<h1>` and the heading outline.
  *
  * `RuledList`/`RuledRow` are NOT reused here, and the plan asks the question directly. They render
- * `<div>`s over a 1px ink grid gap, which is the orders list's shape (Task 6) and not this one:
- * these rows are `<tr>`s under a single hairline, and wrapping table semantics in a div primitive
- * would trade the whole point of this component for the reuse of nine class names.
+ * `<div>`s over a 1px ink grid gap; these rows are `<tr>`s under a single hairline, and wrapping
+ * table semantics in a div primitive would trade the whole point of this component for the reuse of
+ * nine class names. Task 6 found the consumer they were built for and it is not the orders LIST
+ * either — those rows carry a `border-b` like these — it is the order detail's contact block, which
+ * the extract measured as that recipe verbatim.
  */
 export function ProductsTable({
   products,

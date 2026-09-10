@@ -206,5 +206,21 @@
   "Save the product first to add photos.": "Salve o produto antes de adicionar fotos.",
   "Sending the photo…": "Enviando a foto…",
   "“{{name}}” is over {{max}} MB. Send a smaller photo.": "“{{name}}” passa de {{max}} MB. Mande uma foto menor.",
-  "I cannot read “{{name}}”. Send a JPEG, PNG or WebP.": "Não consigo ler “{{name}}”. Mande um JPEG, PNG ou WebP."
+  "I cannot read “{{name}}”. Send a JPEG, PNG or WebP.": "Não consigo ler “{{name}}”. Mande um JPEG, PNG ou WebP.",
+  "No orders yet.": "Nenhum pedido ainda.",
+  "1 item": "1 item",
+  "{{count}} items": "{{count}} itens",
+  "Mark as shipped": "Marcar como despachado",
+  "Tracking code (optional)": "Código de rastreio (opcional)",
+  "Confirm": "Confirmar",
+  "Marking as shipped…": "Marcando como despachado…",
+  "This order already moved on. Reload the panel.": "Este pedido já mudou de situação. Recarregue o painel.",
+  "How they found me": "Como me achou",
+  "This order never reached Stripe.": "Este pedido não chegou ao Stripe.",
+  "tracking {{code}}": "rastreio {{code}}",
+  "Items": "Itens",
+  "Customer notes": "Notas do cliente",
+  "Gift message": "Mensagem do presente",
+  "Reply by e-mail": "Responder por e-mail",
+  "Tracking code: {{code}}": "Código de rastreio: {{code}}"
 }
