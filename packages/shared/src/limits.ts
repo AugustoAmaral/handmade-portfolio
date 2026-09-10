@@ -30,11 +30,15 @@ export const MAX_SPECS = 12
  * Both sides now agree on `< MAX_PHOTO_BYTES`, and `admin-products.test.ts` pins the boundary in
  * both directions rather than only from above.
  *
- * ⚠️ A FILE THAT REACHES THIS IS A 500 AND NOT A 4xx. `multer` throws a `MulterError`, which is
- * neither `AppError` nor `ZodError`, so `errorHandler` falls through to `INTERNAL` — nothing in the
- * API handles it. The panel refuses an oversized file before sending it, which is why the value has
- * to be here rather than only in the route: it is the browser that keeps the reader away from an
- * error nobody can explain.
+ * A file that reaches this is a 413 `PHOTO_TOO_LARGE`, whose message names this number: `multer`
+ * throws a `MulterError`, and `errorHandler` maps `LIMIT_FILE_SIZE` to that code. It answered
+ * `500 INTERNAL` until the upload's failures were given honest codes.
+ *
+ * ⚠️ THE PANEL STILL NEVER SEES THAT 413, and the value has to live here for that reason rather
+ * than in spite of it. The browser refuses a file at `>= MAX_PHOTO_BYTES` while multer only errors
+ * ABOVE it, so the window of sizes that pass one and trip the other is EMPTY. The 413 is the truth
+ * for anything speaking to the API directly; the shared constant is what keeps that window shut.
+ * The two guards drifting apart is the only thing that would open it.
  */
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024
 

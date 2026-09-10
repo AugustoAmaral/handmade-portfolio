@@ -90,3 +90,22 @@ export const InEnglish: Story = {
     await expect(canvas.queryByLabelText('Notas para mim')).toBeNull()
   },
 }
+
+/**
+ * NOTHING HERE IS INFORMATION ABOUT THE BUYER, so nothing here gets an autofill token, and that
+ * absence is a decision rather than an oversight — which is why it is pinned. SC 1.3.5 covers
+ * fields that collect data ABOUT THE PERSON filling the form in; a note about the letter, a
+ * message to print on a gift card and how somebody heard of the shop are none of them, and no
+ * token in the HTML list names any of the three.
+ *
+ * The one that would tempt a sweep is `Como me encontrou?`, which sits beside `E-mail` and `Nome`
+ * in the same visual language two sections up.
+ */
+export const NoPurposeToDeclare: Story = {
+  args: { values: FILLED },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('Notas para mim')).not.toHaveAttribute('autocomplete')
+    await expect(canvas.getByLabelText('É presente? Mensagem no cartão')).not.toHaveAttribute('autocomplete')
+    await expect(canvas.getByLabelText('Como me encontrou? (opcional)')).not.toHaveAttribute('autocomplete')
+  },
+}

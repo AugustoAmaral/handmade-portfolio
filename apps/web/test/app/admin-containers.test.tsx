@@ -770,6 +770,69 @@ describe('ProductFormRoute', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Esse identificador já está em uso.')
   })
 
+  /**
+   * THE UPLOAD'S FAILURES, IN THE ONLY SLOT THIS SCREEN HAS FOR THEM. `PhotosEditor` has no error
+   * prop — its own message line carries the checks the browser makes BEFORE posting — so a server
+   * refusal lands in the action bar at the bottom of the form, beside Save, and not beside the
+   * photos. That is the deferred gap, not a choice made here.
+   *
+   * All three of these were the same `INTERNAL` until now, because this container answered every
+   * upload failure with a hard-coded code and never read the one the API sent.
+   */
+  it('says a photo the server could not read in words rather than in the API’s code', async () => {
+    // THE ONE OF THE THREE THE PANEL CAN ACTUALLY PRODUCE. `photoProblem` checks the type the
+    // BROWSER reports, and a browser derives it largely from the extension — so a renamed PDF, a
+    // truncated download or a renamed HEIC is `image/jpeg` to this check, passes it, and fails
+    // inside sharp on the other side.
+    signedIn()
+    stubFetch((url, init) =>
+      init?.method === 'POST' && url.includes('/photos') ? fail(400, 'PHOTO_UNREADABLE') : catalogue(),
+    )
+    renderAdmin('/admin/products/p-letter')
+
+    const picker = await screen.findByLabelText(/Adicionar foto/)
+    await userEvent.upload(picker, new File(['%PDF-1.4'], 'foto.jpg', { type: 'image/jpeg' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Não consegui ler este arquivo como foto. Mande um JPEG, PNG ou WebP.',
+    )
+  })
+
+  it('names the real limit when the server refuses a photo for its size', async () => {
+    // REACHABLE ONLY IF THE TWO GUARDS DRIFT, and that is why the mapping is here rather than left
+    // out: `photoProblem` refuses `>= MAX_PHOTO_BYTES` in the browser and multer only errors ABOVE
+    // it, so today no file passes one and trips the other. What this pins is that the panel has a
+    // sentence for the answer the API gives — an unmapped code is printed RAW at the reader — and
+    // that the sentence names the shared constant instead of a literal.
+    signedIn()
+    stubFetch((url, init) =>
+      init?.method === 'POST' && url.includes('/photos') ? fail(413, 'PHOTO_TOO_LARGE') : catalogue(),
+    )
+    renderAdmin('/admin/products/p-letter')
+
+    const picker = await screen.findByLabelText(/Adicionar foto/)
+    await userEvent.upload(picker, new File(['x'], 'nova.png', { type: 'image/png' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Esta foto passa de 8 MB. Mande uma menor.')
+  })
+
+  it('still collapses an upload failure it has no sentence for', async () => {
+    // The other direction, and the one that keeps the two tests above from being satisfied by a
+    // container that forwards whatever arrives: `PHOTO_NOT_FOUND` has no entry in the table, so
+    // forwarding it would print PHOTO_NOT_FOUND in English capitals at the one person who reads
+    // this screen. Task 8's finding, and the reason `SLUG_TAKEN` needed a line of its own.
+    signedIn()
+    stubFetch((url, init) =>
+      init?.method === 'POST' && url.includes('/photos') ? fail(404, 'PHOTO_NOT_FOUND') : catalogue(),
+    )
+    renderAdmin('/admin/products/p-letter')
+
+    const picker = await screen.findByLabelText(/Adicionar foto/)
+    await userEvent.upload(picker, new File(['x'], 'nova.png', { type: 'image/png' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Algo quebrou do meu lado. Tente de novo em instantes.')
+  })
+
   it('deletes the product it is editing and goes back to the table', async () => {
     signedIn()
     let list: PublicProduct[] = [...CATALOGUE]

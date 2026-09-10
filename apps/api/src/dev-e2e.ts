@@ -1,4 +1,11 @@
 // E2e/dev boot: in-memory Mongo, seeded, fixed admin credentials. NEVER deployed.
+import {
+  type Buyer,
+  type OrderStatus,
+  type ShippingAddress,
+  type ShippingMethod,
+  computeTotals,
+} from '@shop/shared'
 import bcrypt from 'bcryptjs'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 import mongoose from 'mongoose'
@@ -80,6 +87,125 @@ await Product.updateOne(
   },
   { upsert: true },
 )
+
+// FOUR ORDERS, WRITTEN STRAIGHT ONTO THE COLLECTION FOR THE REASON THE PHOTOS ABOVE WERE: the
+// ordinary way to make one is to pay for it. `POST /api/checkout` creates the order and then asks
+// Stripe for a session; the key this boot defaults to is `sk_test_dummy`, Stripe answers 401, and
+// the route DELETES the order it had just made before answering 502 — so short of exporting a real
+// test key, nothing a browser can do here leaves an `Order` behind. Without one,
+// `GET /api/orders/:orderNumber` had no e2e coverage at all, and `/thanks` and the whole of
+// `/admin/orders` — the list, the three filter modes and the PATCH — were addresses the suite
+// could not open.
+//
+// FOUR STATUSES AND NOT FIVE. `shipped` is the one the dispatch test MAKES, out of #MHP-1002, and
+// that is also why these are `$set` where the draft above is `$setOnInsert`: `ADMIN_ORDER_TRANSITIONS`
+// gives `shipped` no way out, so a boot is what puts the paid order back.
+//
+// NO TWO OF THEM SHARE A FIELD AN ASSERTION CAN NAME — not the number, the buyer, the money, the
+// status, the shipping method or the day. `apps/web/src/fixtures/orders.ts` carries the same rule
+// and `fixtures.test.ts` pins it, after a sweep found three fixtures at one total and two buyers
+// under one name: enough for "it shows THIS order's total" to pass on three other orders. The
+// phone is the one field deliberately present on a single order, so the contact block in the
+// detail pane is drawn both with its optional row and without it.
+//
+// `timestamps: false`, WITHOUT WHICH ALL FOUR DATES ARE TODAY. Mongoose overwrites a `createdAt`
+// given in `$set` with the moment of the write — measured against this schema, not assumed — and
+// `createdAt` is what the orders list prints in every row. It would have collapsed, silently and on
+// every boot, the one field this fixture spreads out most carefully.
+//
+// AND THE NUMBERS START AT 1001 SO THEY CANNOT MEET THE COUNTER. `nextOrderNumber` starts at 1 and
+// `orderNumber` is a unique index, so a checkout that really reaches Stripe — the one test in the
+// spec that needs a real key — would collide with a seeded `1` and answer 500 instead.
+const { Order } = await import('./models/order.js')
+
+const pieces = new Map((await Product.find()).map((p) => [p.slug, p]))
+
+// The snapshot `routes/checkout.ts` takes, taken the same way: an order remembers the name and the
+// price the catalogue had when it was placed. So the money below is the seed's rather than a second
+// copy of it, and the totals are `computeTotals`' rather than four numbers typed out by hand.
+function line(slug: string, qty: number) {
+  const product = pieces.get(slug)!
+  return {
+    productId: String(product._id),
+    slug,
+    name: { pt: product.name!.pt!, en: product.name!.en! },
+    qty,
+    unitAmountCents: product.priceCents,
+  }
+}
+
+function amountsFor(items: ReturnType<typeof line>[], method: ShippingMethod) {
+  const lines = items.map((i) => ({ priceCents: i.unitAmountCents, qty: i.qty, type: pieces.get(i.slug)!.type }))
+  return { ...computeTotals(lines, method), currency: 'brl' }
+}
+
+/** Everything `routes/checkout.ts` writes that is not derived: the amounts come from `amountsFor`. */
+interface E2eOrder {
+  orderNumber: number
+  status: OrderStatus
+  stripeSessionId: string
+  buyer: Buyer
+  shippingAddress: ShippingAddress
+  shippingMethod: ShippingMethod
+  items: ReturnType<typeof line>[]
+  createdAt: Date
+  paidAt?: Date
+}
+
+const E2E_ORDERS: E2eOrder[] = [
+  {
+    orderNumber: 1001,
+    status: 'pending',
+    stripeSessionId: 'cs_e2e_1001',
+    buyer: { name: 'Marta Rezende', email: 'marta@example.com' },
+    shippingAddress: { country: 'BR', postalCode: '30150-904', street: 'Rua Sapucaí', number: '388', complement: 'ap. 51', district: 'Floresta', city: 'Belo Horizonte', state: 'MG' },
+    shippingMethod: 'pac',
+    items: [line('handwritten-letter', 3)],
+    createdAt: new Date('2026-09-01T13:00:00.000Z'),
+  },
+  {
+    orderNumber: 1002,
+    status: 'paid',
+    stripeSessionId: 'cs_e2e_1002',
+    buyer: { name: 'Otávio Lins', email: 'otavio@example.com', phone: '+55 11 98812-4407' },
+    shippingAddress: { country: 'BR', postalCode: '01310-200', street: 'Avenida Paulista', number: '1578', district: 'Bela Vista', city: 'São Paulo', state: 'SP' },
+    shippingMethod: 'sedex',
+    items: [line('handwritten-letter', 2)],
+    createdAt: new Date('2026-09-03T13:00:00.000Z'),
+    paidAt: new Date('2026-09-04T13:00:00.000Z'),
+  },
+  {
+    orderNumber: 1003,
+    status: 'oversold',
+    stripeSessionId: 'cs_e2e_1003',
+    buyer: { name: 'Sofia Quintela', email: 'sofia@example.com' },
+    shippingAddress: { country: 'BR', postalCode: '90010-190', street: 'Rua da Praia', number: '12', district: 'Centro Histórico', city: 'Porto Alegre', state: 'RS' },
+    shippingMethod: 'pac',
+    items: [line('original-pencil-drawing', 1)],
+    createdAt: new Date('2026-09-05T13:00:00.000Z'),
+    paidAt: new Date('2026-09-06T13:00:00.000Z'),
+  },
+  {
+    // The only order carrying a digital line, and it still pays postage — `computeTotals` charges
+    // the method as soon as ONE line is physical, and two of these three are.
+    orderNumber: 1004,
+    status: 'expired',
+    stripeSessionId: 'cs_e2e_1004',
+    buyer: { name: 'Décio Rabelo', email: 'decio@example.com' },
+    shippingAddress: { country: 'BR', postalCode: '50030-170', street: 'Rua do Bom Jesus', number: '197', district: 'Recife Antigo', city: 'Recife', state: 'PE' },
+    shippingMethod: 'sedex',
+    items: [line('handwritten-letter', 1), line('original-pencil-drawing', 1), line('digital-letter', 2)],
+    createdAt: new Date('2026-09-02T13:00:00.000Z'),
+  },
+]
+
+for (const order of E2E_ORDERS) {
+  await Order.updateOne(
+    { orderNumber: order.orderNumber },
+    { $set: { ...order, locale: 'pt', amounts: amountsFor(order.items, order.shippingMethod) } },
+    { upsert: true, timestamps: false },
+  )
+}
 
 createApp().listen(Number(process.env.PORT), () => {
   console.log(`e2e api on :${process.env.PORT}`)

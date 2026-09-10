@@ -1,4 +1,4 @@
-import type { FieldErrors } from '@shop/shared'
+import { MAX_PHOTO_BYTES, type FieldErrors } from '@shop/shared'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FieldLabel, TextInput } from '../primitives'
@@ -48,6 +48,12 @@ export function CheckoutSection({ id, tag, children }: { id: string; tag: string
  *
  * `wide` spans every column of whichever grid holds it. It is a layout fact about the field (a
  * street or a full name wants the row) and not about the grid, so it travels with the field.
+ *
+ * `autoComplete` is forwarded, not decided. WCAG 2.2 SC 1.3.5 wants the HTML autofill token for
+ * what the field collects, and only the caller knows that — this cell is used by three sections
+ * and two of them collect things the autofill list has no name for. It is deliberately OPTIONAL
+ * rather than required: a token invented to satisfy a type is exactly the failure the tokens are
+ * meant to prevent, since a wrong one makes a password manager fill the wrong box.
  */
 export function CheckoutField({
   id,
@@ -56,6 +62,7 @@ export function CheckoutField({
   onChange,
   error,
   type,
+  autoComplete,
   placeholder,
   wide = false,
 }: {
@@ -65,13 +72,22 @@ export function CheckoutField({
   onChange: (value: string) => void
   error?: string
   type?: 'text' | 'email' | 'tel'
+  autoComplete?: string
   placeholder?: string
   wide?: boolean
 }) {
   return (
     <div className={`flex flex-col gap-2 ${wide ? 'col-span-full' : ''}`}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <TextInput id={id} value={value} onChange={onChange} error={error} type={type} placeholder={placeholder} />
+      <TextInput
+        id={id}
+        value={value}
+        onChange={onChange}
+        error={error}
+        type={type}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+      />
     </div>
   )
 }
@@ -121,6 +137,20 @@ export function useErrorMessage(): (code: string) => string {
       // without this line the panel prints SLUG_TAKEN at the one person who reads it.
       case 'SLUG_TAKEN':
         return t('This identifier is already in use.')
+      // The photo upload's three refusals, which used to be one 500 each and therefore one
+      // "something broke on my side" each. Only the first is reachable from this panel: the file
+      // picker checks the type the BROWSER reports, which is derived largely from the extension, so
+      // a renamed PDF or a truncated download passes it and fails in the API's image conversion.
+      case 'PHOTO_UNREADABLE':
+        return t('I could not read this file as a photo. Send a JPEG, PNG or WebP.')
+      // The size the picker already refuses, so the API's 413 arrives only if the two guards ever
+      // stop reading the same constant. The number comes from that constant either way.
+      case 'PHOTO_TOO_LARGE':
+        return t('This photo is over {{max}} MB. Send a smaller one.', { max: MAX_PHOTO_BYTES / 1024 / 1024 })
+      // Everything else the upload middleware refuses — an unexpected part, a second file. A
+      // browser posting this form cannot produce one; a sentence still beats the code itself.
+      case 'BAD_UPLOAD':
+        return t('The upload was rejected. Try sending the photo again.')
       case 'INTERNAL':
         return t('Something broke on my side. Try again in a moment.')
       default:

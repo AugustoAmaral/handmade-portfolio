@@ -44,6 +44,28 @@ const PREFIX = 'shippingAddress'
  * A UI that branches on the raw string shows the international form to someone who typed `br` and
  * then gets `invalid_cep` back from an API that disagreed about which country this is.
  *
+ * SIX OF THE EIGHT FIELDS DECLARE AN AUTOFILL PURPOSE (SC 1.3.5) AND TWO DELIBERATELY DO NOT.
+ * The HTML autofill list models a street address as `address-line1..3` plus administrative levels,
+ * and this form decomposes a Brazilian address finer than that, so two boxes have nothing in the
+ * list that names them:
+ *
+ *   - `Número`. There is no house-number token. In the model the number belongs to line 1, which
+ *     `Rua / logradouro` already carries; the only unused nearby token is `address-line2`, and
+ *     taking it would aim the complement's content at the number box.
+ *   - `Bairro`. The candidates are `address-level3` (the THIRD administrative level) and
+ *     `address-line3`. A bairro is not an administrative division — Brazil's are the state and the
+ *     municipality, already levels 1 and 2 — and there is no third address line here either, since
+ *     the complement is line 2. Either would be a token picked by elimination.
+ *
+ * A wrong token is worse than none, because it is the one failure that is not inert: an
+ * unrecognised token is ignored, while a recognised one aimed at the wrong box has a password
+ * manager writing a city name into a street field. Leaving these two bare is the answer, not the
+ * omission — and `CheckoutAddressSection.stories` asserts the absence so it stays a decision.
+ *
+ * `country` and not `country-name`, because the box holds a CODE: the rules compare it upper-cased
+ * against `BR` and `shippingOptionsFor` looks it up in `INTL_ALLOWED_COUNTRIES`, so a browser
+ * filling in `Brasil` would be filling in something the API rejects.
+ *
  * A bare `shippingAddress` error has no field to hang on — it is what the rules emit when the
  * address is missing entirely — so it gets a section-level alert. The form always sends an address
  * object, so this arrives only from a request the page did not build; rendering it anyway is the
@@ -65,6 +87,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
         <CheckoutField
           id="address-country"
           label={t('Country')}
+          autoComplete="country"
           value={values.country}
           error={errorFor(`${PREFIX}.country`)}
           onChange={(v) => onChange('country', v)}
@@ -72,6 +95,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
         <CheckoutField
           id="address-postal-code"
           label={brazil ? t('CEP') : t('Postal code')}
+          autoComplete="postal-code"
           value={values.postalCode}
           error={errorFor(`${PREFIX}.postalCode`)}
           onChange={(v) => onChange('postalCode', v)}
@@ -89,6 +113,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
           <CheckoutField
             id="address-complement"
             label={t('Complement')}
+            autoComplete="address-line2"
             value={values.complement}
             error={errorFor(`${PREFIX}.complement`)}
             onChange={(v) => onChange('complement', v)}
@@ -98,6 +123,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
           wide
           id="address-street"
           label={t('Street')}
+          autoComplete="address-line1"
           value={values.street}
           error={errorFor(`${PREFIX}.street`)}
           onChange={(v) => onChange('street', v)}
@@ -114,6 +140,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
         <CheckoutField
           id="address-city"
           label={t('City')}
+          autoComplete="address-level2"
           value={values.city}
           error={errorFor(`${PREFIX}.city`)}
           onChange={(v) => onChange('city', v)}
@@ -121,6 +148,7 @@ export function CheckoutAddressSection({ values, errors, onChange }: CheckoutAdd
         <CheckoutField
           id="address-state"
           label={brazil ? t('State') : t('State / province')}
+          autoComplete="address-level1"
           value={values.state}
           error={errorFor(`${PREFIX}.state`)}
           onChange={(v) => onChange('state', v)}
