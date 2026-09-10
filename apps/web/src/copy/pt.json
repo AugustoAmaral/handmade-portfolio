@@ -154,5 +154,19 @@
   "Sign in": "Entrar",
   "Signing in…": "Entrando…",
   "That e-mail and password do not match.": "E-mail e senha não conferem.",
-  "Your session ended. Sign in again.": "Sua sessão terminou. Entre de novo."
+  "Your session ended. Sign in again.": "Sua sessão terminou. Entre de novo.",
+  "Product": "Produto",
+  "Price": "Preço",
+  "Stock": "Estoque",
+  "Type": "Tipo",
+  "Status": "Situação",
+  "No products yet.": "Nenhum produto ainda.",
+  "Active": "Ativo",
+  "Inactive": "Inativo",
+  "Unlimited": "Sem limite",
+  "Edit": "Editar",
+  "Delete": "Apagar",
+  "Delete for good?": "Apagar de vez?",
+  "Yes, delete": "Sim, apagar",
+  "Cancel": "Cancelar"
 }
