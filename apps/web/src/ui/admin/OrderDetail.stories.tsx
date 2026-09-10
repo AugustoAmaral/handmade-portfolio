@@ -50,7 +50,10 @@ type Story = StoryObj<typeof meta>
  */
 export const PaidOrder: Story = {
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole('heading', { level: 2, name: 'Marina Bicalho' })).toBeInTheDocument()
+    // Read off the fixture, not typed. The name was `Marina Bicalho` here and `paidOrder` inherited
+    // it from `pendingOrder`, so this line passed on the order NEXT TO the one it names — which is
+    // the whole point of the story below it, `TheListAndTheDetailAgree`.
+    await expect(canvas.getByRole('heading', { level: 2, name: paidOrder.buyer.name })).toBeInTheDocument()
     // THE OUTLINE, AS ONE EQUALITY. The pane is a region named after the customer and every block
     // inside it is a region named after its own heading — which is what makes the sections read as
     // parts of THIS order rather than as peers of it. The gift block is absent from the list
@@ -88,10 +91,15 @@ export const PaidOrder: Story = {
     // range the shipping table already publishes is what can honestly be shown.
     await expect(canvas.getByText('Correios SEDEX · 3 a 5 dias úteis')).toBeInTheDocument()
 
-    await expect(canvas.getAllByRole('listitem').map((line) => line.textContent)).toEqual([
-      `Carta escrita à mão1 × ${formatPrice(4500, 'pt')}`,
-      `Desenho a nanquim2 × ${formatPrice(12000, 'pt')}`,
-    ])
+    // The unit prices come from the ORDER's own snapshot rather than being typed again: 4500 and
+    // 12000 were a second copy of `items[n].unitAmountCents`, and a snapshot is exactly the kind of
+    // value that is supposed to be able to differ from today's catalogue price.
+    //
+    // The qty-2 row is what makes `qty × unit` distinguishable from `qty × line total` at all; the
+    // qty-1 row above it cannot tell them apart on its own.
+    await expect(canvas.getAllByRole('listitem').map((line) => line.textContent)).toEqual(
+      paidOrder.items.map((item) => `${item.name.pt}${item.qty} × ${formatPrice(item.unitAmountCents, 'pt')}`),
+    )
 
     await expect(canvas.getByText(paidOrder.notes!)).toBeInTheDocument()
     await expect(canvas.queryByRole('heading', { name: 'Mensagem do presente' })).toBeNull()

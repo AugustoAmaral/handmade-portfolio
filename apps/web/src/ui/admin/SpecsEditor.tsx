@@ -1,4 +1,4 @@
-import type { FieldErrors, PublicProduct } from '@shop/shared'
+import { MAX_SPECS, type FieldErrors, type PublicProduct } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { SectionRule, TextInput } from '../primitives'
 import { useFieldError } from '../shop/CheckoutSection'
@@ -20,16 +20,6 @@ export interface SpecsEditorProps {
   errors: FieldErrors
   onChange(values: SpecDraft[]): void
 }
-
-/**
- * `specs: z.array(specSchema).max(12)`, and this is the second copy of that 12. It is a CHECKED
- * copy in the sense `MIN_PRICE_CENTS` established: `SpecsEditor.stories.tsx` runs twelve rows and
- * thirteen rows through `productInputSchema` itself, so moving the cap upstream reddens a story
- * here instead of leaving the sentence beside the button quietly lying about the limit. Exporting
- * the number from `@shop/shared` beside the schema is the better home and is a change to a package
- * this task may not touch.
- */
-export const MAX_SPECS = 12
 
 export const EMPTY_SPEC: SpecDraft = { key: { pt: '', en: '' }, value: { pt: '', en: '' } }
 

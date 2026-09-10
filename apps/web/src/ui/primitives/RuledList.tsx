@@ -28,11 +28,20 @@ export function RuledList({
  * primitive rather than two utility classes: a row that forgets it shows ink through, which reads
  * as a rendering fault rather than as a missing class.
  *
- * It stays a `<div>` with no `as` of its own. Inside a `<dl>` a `<div>` wrapping one `<dt>` and one
- * `<dd>` is the standard grouping and is what the caller needs; `CheckoutShippingSection` paints
- * the same recipe onto a `<label>` and could not use this either way, which is a sweep item rather
- * than a reason to widen this.
+ * `as` FOR THE SAME REASON `RuledList` HAS ONE, and it took the sweep to close it. Inside a `<dl>`
+ * a `<div>` wrapping one `<dt>` and one `<dd>` is the standard grouping and is what the order
+ * detail needs; `CheckoutShippingSection`'s row is a `<label>` wrapping a radio, which is what a
+ * clickable option has to be — and it had the three classes copied out because a `<div>` could not
+ * be it. Two elements with a reason, spelled out rather than generic, exactly as above.
  */
-export function RuledRow({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`bg-paper px-4 py-3.5 ${className}`}>{children}</div>
+export function RuledRow({
+  children,
+  as: Element = 'div',
+  className = '',
+}: {
+  children: ReactNode
+  as?: 'div' | 'label'
+  className?: string
+}) {
+  return <Element className={`bg-paper px-4 py-3.5 ${className}`}>{children}</Element>
 }

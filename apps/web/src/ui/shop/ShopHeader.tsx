@@ -1,3 +1,4 @@
+import { SHOP_NAME } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { LangToggle } from '../primitives'
 import { routes } from '../routes'
@@ -8,14 +9,6 @@ export interface ShopHeaderProps {
   onToggleLang(): void
   onOpenCart(): void
 }
-
-/**
- * The shop's name is a proper noun and a joke about the site itself, so it is not `t()`-able copy
- * and neither is the `est. 2026` that trails it — a brand mark reads the same in both languages.
- * It is hardcoded rather than a prop because `ShopHeaderProps` is the container's contract and the
- * container has nowhere to get it from: there is one shop.
- */
-const SHOP_NAME = 'My Handmade Portfolio'
 
 /**
  * The prototype's header is six `<span onClick>`s inside two divs — no header, no nav, no link and
@@ -39,6 +32,10 @@ export function ShopHeader({ cartCount, lang, onToggleLang, onOpenCart }: ShopHe
         {/* The link wraps the name alone: with `est. 2026` inside it, the home link would announce
             itself as "My Handmade Portfolio est. 2026". The prototype makes the whole block one
             click target; a slightly smaller one is worth an accessible name that is the brand. */}
+        {/* The name is `@shop/shared`'s, not this file's. It was a private constant here and
+            another in `AdminHeader`, and nothing rendered-name-shaped was ever asserted, so the two
+            could have drifted apart for a whole PR in silence. `est. 2026` stays here: it belongs
+            to the shop's bar and to nothing else. */}
         <a href={routes.home()} className="font-display text-[22px] tracking-normal normal-case">
           {SHOP_NAME}
         </a>

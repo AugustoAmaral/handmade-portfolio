@@ -1,18 +1,7 @@
-import { type AdminOrder, ORDER_STATUSES, type OrderStatus, canTransition } from '@shop/shared'
+import { type AdminOrder, type AdminOrderFilter, ORDER_STATUSES, type OrderStatus, canTransition } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { OrderDetail, type OrderDetailProps, OrdersList } from '../admin'
-import { FieldLabel, PillButton, Select } from '../primitives'
-
-/**
- * The two filters that are not a status. `all` asks for everything; ABSENT asks for the API's own
- * default, which is everything except `expired`, and is not a synonym for `all`.
- *
- * `queries.ts` declares the same union in `src/app` and cannot be imported from here — `src/ui` may
- * import `react`, `react-i18next`, `@shop/shared` and itself, and nothing else. A container may
- * import THIS one; the third home for it is `@shop/shared`, beside `ORDER_STATUSES`, which is where
- * it belongs and which this task may not touch. Sweep item.
- */
-export type AdminOrderFilter = OrderStatus | 'all'
+import { FieldLabel, PillButton, STATUS_LABELS, Select } from '../primitives'
 
 /**
  * The `<option>` value standing for "send no `status` at all". It cannot be the empty string: the
@@ -38,31 +27,6 @@ export interface AdminOrdersPageProps {
   onRetry?(): void
   /** `OrderDetail`'s whole contract minus the two things the page owns. */
   dispatch: Omit<OrderDetailProps, 'order' | 'lang'>
-}
-
-type Translate = ReturnType<typeof useTranslation>['t']
-
-/**
- * A SECOND COPY OF `STATUS_LABELS`, AND A FORCED ONE. That map is reached through the single
- * runtime-built `t()` call `copy.test.ts` allows anywhere in `src/ui`; a second `t(LABELS[status])`
- * reddens the scan, and a filter that cannot name a status cannot offer it. So the five sentences
- * are spelled out here in the switch idiom `NoticePage`, `LoginCard` and `TrackingInlineForm`
- * already use — no new keys, and `AdminOrdersPage.stories.tsx` checks every option label against
- * the pill beside it so the two cannot drift.
- */
-function statusLabel(status: OrderStatus, t: Translate): string {
-  switch (status) {
-    case 'pending':
-      return t('Awaiting payment')
-    case 'paid':
-      return t('In production')
-    case 'shipped':
-      return t('Shipped')
-    case 'oversold':
-      return t('Insufficient stock')
-    case 'expired':
-      return t('Expired')
-  }
 }
 
 /** `NO_FILTER` and anything unrecognised mean absent; nothing is coerced into a status. */
@@ -165,7 +129,12 @@ export function AdminOrdersPage({
             options={[
               { value: NO_FILTER, label: t('Everything except expired') },
               { value: 'all', label: t('Everything') },
-              ...ORDER_STATUSES.map((status) => ({ value: status, label: statusLabel(status, t) })),
+              // `StatusPill`'S OWN MAP, not a second copy of it. This used to be a five-branch
+              // switch spelling the same five sentences out again, because `copy.test.ts` allowed
+              // exactly one runtime-built `t()` in the whole of `src/ui` and the pill had spent it.
+              // The scan now registers the key SET per file instead of rationing call sites, so the
+              // filter and the pill it has to agree with read one map.
+              ...ORDER_STATUSES.map((status) => ({ value: status, label: t(STATUS_LABELS[status]) })),
             ]}
             onChange={(value) => onFilterChange(filterFromOption(value))}
           />

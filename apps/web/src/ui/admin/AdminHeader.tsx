@@ -1,3 +1,4 @@
+import { SHOP_NAME } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { routes } from '../routes'
 
@@ -18,13 +19,6 @@ export interface AdminHeaderProps {
   signedIn: boolean
   onSignOut(): void
 }
-
-/**
- * Duplicated from `ShopHeader`, and knowingly. The brand is one string in two bars and it should be
- * one constant; hoisting it is a change to a shop file that this task is not allowed to make, so it
- * is recorded here instead of being quietly forgotten. The sweep should collapse the two.
- */
-const SHOP_NAME = 'My Handmade Portfolio'
 
 /**
  * The admin's dark bar: paper on ink, which is the only surface on this project that runs that way

@@ -1,3 +1,4 @@
+import { SHOP_NAME } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent } from 'storybook/test'
 import { AdminHeader } from './AdminHeader'
@@ -83,6 +84,20 @@ export const MarksTheCurrentSection: Story = {
 
     const widthOf = (element: Element) => parseFloat(getComputedStyle(element).borderBottomWidth)
     await expect(widthOf(orders)).toBeGreaterThan(widthOf(products))
+  },
+}
+
+/**
+ * THE SAME BRAND AS THE SHOP'S BAR, from the same constant, and NOT a link — which is the pair of
+ * facts this story exists for. The two bars each used to declare their own `SHOP_NAME` and nothing
+ * read either one, so a drift between them was invisible; and the panel is unlinked from the shop
+ * (spec:11), so a brand that navigated would be a second unlabelled door to the place `Ver a loja`
+ * already goes.
+ */
+export const TheBrandIsNotALink: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(SHOP_NAME)).toBeInTheDocument()
+    await expect(canvas.queryByRole('link', { name: SHOP_NAME })).toBeNull()
   },
 }
 

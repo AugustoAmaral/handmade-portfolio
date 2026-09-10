@@ -184,11 +184,11 @@ export function AdminProductFormPage({
         <div className="border-ink flex flex-col gap-3 border-t pt-6">
           <div className="font-mono flex flex-wrap items-center gap-3.5 text-xs uppercase tracking-[0.1em]">
             {/*
-              THE BUTTON KEEPS ITS NAME WHILE SAVING, following `TrackingInlineForm` and
-              `OrderSummaryPanel` rather than `LoginCard`, which swaps its submit to `Entrando…`:
-              a disabled button is dropped from the accessibility tree by some screen readers, so a
-              swapped label may never be read, and a control that renames itself is one a
-              voice-control user can no longer ask for. The live region below says it instead.
+              THE BUTTON KEEPS ITS NAME WHILE SAVING, which is now the one shape on the branch:
+              `LoginCard` was the exception and the sweep brought it here. A disabled button is
+              dropped from the accessibility tree by some screen readers, so a swapped label may
+              never be read, and a control that renames itself is one a voice-control user can no
+              longer ask for. The live region below says it instead.
             */}
             {/* Off while a DELETE is in flight too. The two requests race for the same document,
                 and a save that lands after the delete is a product that comes back. */}

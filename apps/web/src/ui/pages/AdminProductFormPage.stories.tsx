@@ -190,11 +190,11 @@ export const ThePhotosSectionIsNotTheDraft: Story = {
 /**
  * SAVING, WHICH THE DESIGN DRAWS FOR NOTHING — no spinner, no disabled control, no result.
  *
- * THE BUTTON KEEPS ITS NAME, following `TrackingInlineForm` and `OrderSummaryPanel` rather than
- * `LoginCard`, which renames its submit to `Entrando…`: a disabled button is dropped from the
+ * THE BUTTON KEEPS ITS NAME. Every submit on the branch does now: `LoginCard` was the one that
+ * renamed itself and the sweep brought it into line. A disabled button is dropped from the
  * accessibility tree by some screen readers, so a swapped label may never be read at all, and a
  * control that renames itself is one a voice-control user can no longer ask for. The live region
- * says it instead. (The two shapes now disagree across the branch — a sweep item, not a defect.)
+ * says it instead.
  */
 export const Saving: Story = {
   args: { saving: true },

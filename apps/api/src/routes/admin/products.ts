@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { productInputSchema, productUpdateSchema } from '@shop/shared'
+import { MAX_PHOTO_BYTES, productInputSchema, productUpdateSchema } from '@shop/shared'
 import { Router } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
@@ -9,7 +9,10 @@ import { deleteObject, putObject } from '../../lib/r2.js'
 import { Product, toPublicProduct } from '../../models/product.js'
 import { adminGuard } from '../../middleware/auth.js'
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } })
+// The limit the PANEL also enforces, from `@shop/shared`. It refuses an oversized file before
+// sending it, which is the only useful message anyone gets: a file that reaches here throws a
+// `MulterError`, which `errorHandler` does not know and answers 500 for.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PHOTO_BYTES } })
 
 const altSchema = z.object({ altPt: z.string().max(200).optional(), altEn: z.string().max(200).optional() })
 

@@ -31,7 +31,10 @@ export const FullCatalogue: Story = {
     // dropped one or reordered them would be visible here rather than in the grid's own story,
     // which renders whatever list it is handed.
     await expect(canvas.getAllByRole('listitem')).toHaveLength(products.length)
-    await expect(canvas.getByText('4 peças')).toBeInTheDocument()
+    // Derived from the same list the cards come from, the way `CatalogGrid.stories.tsx` does it. A
+    // literal `4` is satisfied by a grid printing a constant, and it happens to be the fixture
+    // length AND the editorial figure `AboutFacts` hardcodes — three fours that mean three things.
+    await expect(canvas.getByText(`${products.length} peças`)).toBeInTheDocument()
 
     // The hero's call to action points at the featured piece, and the closing band's mail link is
     // built from the address this page was given — two props whose only job is to reach a href.

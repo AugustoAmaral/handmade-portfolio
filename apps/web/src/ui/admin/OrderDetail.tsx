@@ -86,7 +86,7 @@ const MUTED = 'font-mono opacity-65'
  * table means the button cannot drift away from the API if that table changes.
  *
  * THE CUSTOMER'S NAME IS THE PANE'S TITLE and the sections nest under it. That is why `SectionRule`
- * grew a `level`: at one level `Envio` announces as a sibling of `Marina Bicalho`, which tells a
+ * grew a `level`: at one level `Envio` announces as a sibling of the customer's name, which tells a
  * reader moving by heading that the address belongs to the screen rather than to the order.
  *
  * IT REQUIRES AN ORDER AND DRAWS NO "NOTHING SELECTED" STATE. A detail pane with no subject is not

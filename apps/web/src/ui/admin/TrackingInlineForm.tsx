@@ -1,3 +1,4 @@
+import { MAX_TRACKING_CODE } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { FieldLabel, PillButton, TextInput } from '../primitives'
 
@@ -51,20 +52,14 @@ function messageFor(error: DispatchError, t: Translate): string {
 const FIELD_ID = 'admin-tracking-code'
 
 /**
- * `z.string().trim().min(1).max(60)` on the PATCH, and a copy of that 60 that CANNOT be checked
- * against its source — the schema lives in `apps/api/src/routes/admin/orders.ts`, which no web test
- * can import. `MAX_PHOTO_BYTES` is in exactly the same position and for the same reason; both
- * belong in `@shop/shared` beside the schemas, where the two sides would read one number. Sweep
- * item.
- *
- * It is mirrored onto the input as `maxLength` rather than validated after the fact. Length is the
+ * `MAX_TRACKING_CODE` is mirrored onto the input as `maxLength` rather than validated after the
+ * fact. Length is the
  * only way this field can be rejected, and the API's 400 would arrive as a zod `fieldErrors` entry
  * this component has no slot for — the container would have to flatten it into "algo quebrou do meu
  * lado", which is both wrong and unactionable. A Correios code is 13 characters, so the cap is
  * never met in practice; what it removes is a failure mode that could only have been reported
  * badly.
  */
-export const MAX_TRACKING_CODE = 60
 
 /**
  * THE ONLY STATUS CHANGE THE ADMIN CAN MAKE, as a two-step (spec:206): the pill reveals the form,
@@ -152,11 +147,19 @@ export function TrackingInlineForm({
         <PillButton onClick={onOpen}>{t('Mark as shipped')}</PillButton>
       )}
 
-      {pending ? (
-        <p role="status" className="font-mono text-[11px] tracking-[0.04em] opacity-80">
-          {t('Marking as shipped…')}
-        </p>
-      ) : null}
+      {/*
+        ALWAYS RENDERED, EMPTY OR NOT, and it was NOT — which made this region the one part of the
+        pending story that could not work. A live region has to be on the page before its content
+        changes or a reader is told nothing, and one that mounts already holding its message is the
+        silent version; `AdminProductFormPage` and `PhotosEditor` both write that rule down and both
+        obey it. Mounted only while `pending`, this said the right words to nobody, and no assertion
+        available here could tell the difference: `getByRole('status')` finds the element either
+        way. `empty:hidden` would reintroduce the same bug through `display`, so the region stays in
+        the flow at zero height and cancels the row's own gap instead.
+      */}
+      <p role="status" className="font-mono text-[11px] tracking-[0.04em] opacity-80 empty:-mt-3">
+        {pending ? t('Marking as shipped…') : ''}
+      </p>
 
       {/* Outside the branch on purpose: a container that closes the form on failure would otherwise
           swallow the only explanation of what happened. */}

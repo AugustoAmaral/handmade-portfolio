@@ -1,4 +1,4 @@
-import type { FieldErrors, PublicProduct } from '@shop/shared'
+import { MAX_PHOTO_BYTES, type FieldErrors, type PublicProduct } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { FieldLabel, ImageFrame, SectionRule, TextInput } from '../primitives'
 import { useFieldError } from '../shop/CheckoutSection'
@@ -58,14 +58,6 @@ export interface PhotosEditorProps {
 }
 
 /**
- * multer's `limits: { fileSize: 8 * 1024 * 1024 }`, and a SECOND COPY OF IT that — unlike
- * `MAX_SPECS` and `MIN_PRICE_CENTS` — cannot be checked against its source: the limit lives in an
- * Express route no web test can import. It is a sweep item. The number belongs beside the schemas
- * in `@shop/shared`, where both sides would read the same one.
- */
-export const MAX_PHOTO_BYTES = 8 * 1024 * 1024
-
-/**
  * What `toWebp` can decode with the sharp build the API ships. HEIC is deliberately NOT here: it is
  * what an iPhone hands over, and sharp cannot read it without libheif, so it is better refused with
  * a sentence than posted for a 500.
@@ -85,7 +77,10 @@ const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
  */
 export function photoProblem(file: File): PhotoProblem | undefined {
   if (!PHOTO_TYPES.includes(file.type)) return 'wrong_type'
-  if (file.size > MAX_PHOTO_BYTES) return 'too_large'
+  // `>=` AND NOT `>`, which is a one-byte difference and was a real one. multer refuses a file of
+  // exactly `MAX_PHOTO_BYTES` — measured against the real route — so `>` left a single size the
+  // browser waved through and the server answered with an unexplainable 500.
+  if (file.size >= MAX_PHOTO_BYTES) return 'too_large'
   return undefined
 }
 

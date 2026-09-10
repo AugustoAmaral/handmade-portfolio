@@ -1,4 +1,4 @@
-import { type FieldErrors, fieldErrorsFromIssues, productInputSchema } from '@shop/shared'
+import { MIN_PRICE_CENTS, type FieldErrors, fieldErrorsFromIssues, productInputSchema } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 import { expect, fn, userEvent } from 'storybook/test'
@@ -6,7 +6,6 @@ import { digitalLetter, drawing, inactiveGuide, letter, soldOutDrawing } from '.
 import { measure, opacityOf } from '../../../.storybook/contrast'
 import {
   EMPTY_BASICS,
-  MIN_PRICE_CENTS,
   ProductBasicsFields,
   type ProductBasicsValues,
   basicsFromProduct,
@@ -350,10 +349,11 @@ export const SatisfiesTheSchema: Story = {
 }
 
 /**
- * THE FLOOR IS IN THE LABEL, and it is the schema's own floor rather than a number typed twice:
- * the hint is `formatPrice(MIN_PRICE_CENTS, lang)`, so it reads R$ 1,00 and not 100, and the two
- * parses below are what make the constant a CHECKED copy — move the minimum in `@shop/shared` and
- * this story goes red instead of the panel quietly promising the wrong minimum.
+ * THE FLOOR IS IN THE LABEL, and it is the schema's own floor: `productInputSchema` and this hint
+ * read the same `MIN_PRICE_CENTS`, and the hint is `formatPrice(…, lang)` so it says R$ 1,00 and
+ * not 100. The two parses below are still the assertion that matters — they say the number the
+ * label prints is the number a save enforces, which sharing a constant makes likely and does not
+ * make true.
  */
 export const ShowsThePriceFloor: Story = {
   play: async ({ args, canvas }) => {

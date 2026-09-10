@@ -160,6 +160,19 @@ describe('fixtures', () => {
     expect(new Set(allOrders.map((o) => o.items)).size).toBe(allOrders.length)
   })
 
+  it('gives every order its own buyer, because the name is what the panel prints as identity', () => {
+    // THE SAME DEFECT ONE FIELD OVER, found by PR 4's sweep. `paidOrder` spread `pendingOrder`
+    // without redeclaring `buyer`, so two of the five rows in `adminOrders` said `Marina Bicalho` —
+    // and the buyer's name is what `OrdersList` prints as the row and what `OrderDetail` prints as
+    // its `<h2>` and its region name. `TheListAndTheDetailAgree` exists to catch a detail pane
+    // showing the wrong order, and it could not catch the pane showing the order NEXT TO this one.
+    //
+    // E-mail as well as name: the pane's `mailto:` is built from it, and two orders sharing an
+    // address would let a reply assertion pass against the wrong customer.
+    expect(new Set(allOrders.map((o) => o.buyer.name)).size).toBe(allOrders.length)
+    expect(new Set(allOrders.map((o) => o.buyer.email)).size).toBe(allOrders.length)
+  })
+
   it('covers the two order shapes the design never draws', () => {
     // Digital-only: `AdminOrder` types both as nullable and the checkout omits both for a cart
     // with nothing physical in it, so the admin's delivery block must render an order that has

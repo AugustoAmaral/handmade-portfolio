@@ -1,7 +1,7 @@
 import { ORDER_STATUSES } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent, within } from 'storybook/test'
-import { adminOrders, paidOrder, shippedOrder } from '../../fixtures/orders'
+import { adminOrders, paidOrder, pendingOrder, shippedOrder } from '../../fixtures/orders'
 import { AdminOrdersPage } from './AdminOrdersPage'
 import { inAdminShell } from './AdminShell.stories'
 import { contrast, parseColor } from '../../../.storybook/contrast'
@@ -53,10 +53,15 @@ export const Orders: Story = {
  * either singular.
  */
 export const OneOrder: Story = {
-  args: { orders: [paidOrder] },
+  // `pendingOrder` AND NOT `paidOrder`, which is the whole point of the fixture choice. A paid
+  // order is dispatchable, so a one-order list makes `total` and `waiting` both 1 and the two
+  // halves of this sentence become the same number — swap the variables at the call site and the
+  // string is byte-identical. This branch has shipped that defect four times; here it costs one
+  // word in the fixture to avoid.
+  args: { orders: [pendingOrder] },
   play: async ({ canvas }) => {
     // Anchored: nothing is selected in this story, so the prompt beside it also says "pedido".
-    await expect(canvas.getByText(/^1 pedido/).textContent).toBe('1 pedido · 1 para despachar')
+    await expect(canvas.getByText(/^1 pedido/).textContent).toBe('1 pedido · 0 para despachar')
   },
 }
 

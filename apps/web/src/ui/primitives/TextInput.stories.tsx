@@ -52,6 +52,27 @@ export const Empty: Story = {
   },
 }
 
+/**
+ * `label` GIVES THE FIELD A NAME OF ITS OWN, and it arrived in PR 4 with no story — `PhotosEditor`
+ * is its only caller, where nine boxes share three visible labels and each needs a name that says
+ * WHICH photo it belongs to (`Alt (PT), Foto 2`). The visible `<label>` stays: it is what a sighted
+ * reader reads and what the click target is.
+ *
+ * TWO NAMES, TWO COMPUTATIONS, AND THEY DISAGREE ON PURPOSE — which is exactly the trap the shared
+ * constraints record. `getByLabelText` reads the `<label>`'s raw `textContent`, so it still finds
+ * the field by the visible word; `toHaveAccessibleName` goes through dom-accessibility-api, where
+ * `aria-label` wins outright. Asserting only one of them would leave the other free to be wrong.
+ */
+export const NamedForItsRow: Story = {
+  args: { label: 'Alt (PT), Foto 2' },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText(LABEL)).toHaveAccessibleName('Alt (PT), Foto 2')
+    // And without the prop the visible label is the whole name, so the assertion above is about
+    // `label` rather than about the markup around it.
+    await expect(canvas.getByLabelText(LABEL)).not.toHaveAccessibleName(LABEL)
+  },
+}
+
 export const WithError: Story = {
   args: { value: 'nope', error: 'E-mail inválido' },
   play: async ({ canvas }) => {

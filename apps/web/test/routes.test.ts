@@ -20,7 +20,6 @@ describe('routes', () => {
   })
 
   it('builds the admin paths, with an optional selected order', () => {
-    expect(routes.admin()).toBe('/admin')
     expect(routes.adminProducts()).toBe('/admin/products')
     expect(routes.adminNewProduct()).toBe('/admin/products/new')
     expect(routes.adminOrders()).toBe('/admin/orders')

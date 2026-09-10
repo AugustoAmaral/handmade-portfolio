@@ -63,7 +63,8 @@ export const SessionEnded: Story = {
 export const Pending: Story = {
   args: { pending: true },
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole('button', { name: 'Entrando…' })).toBeDisabled()
+    await expect(canvas.getByRole('button', { name: 'Entrar' })).toBeDisabled()
+    await expect(canvas.getByRole('status').textContent).toBe('Entrando…')
   },
 }
 

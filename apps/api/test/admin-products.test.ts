@@ -1,14 +1,26 @@
+import { MAX_PHOTO_BYTES } from '@shop/shared'
 import jwt from 'jsonwebtoken'
 import sharp from 'sharp'
 import request from 'supertest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
 import { Product } from '../src/models/product'
+import * as images from '../src/lib/images'
 import * as r2 from '../src/lib/r2'
 
 vi.mock('../src/lib/r2', () => ({ putObject: vi.fn(), deleteObject: vi.fn() }))
 const putObject = vi.mocked(r2.putObject)
 const deleteObject = vi.mocked(r2.deleteObject)
+
+// A SPY THAT DELEGATES, not a stub. The webp conversion is real in every test that cares about it —
+// the format and the key assertions below run sharp for real — and the size-limit test needs to
+// know only WHETHER the route got as far as calling it, because multer rejecting a file and sharp
+// failing to decode one are the same 500 from the outside.
+vi.mock('../src/lib/images', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/images')>()
+  return { toWebp: vi.fn(actual.toWebp) }
+})
+const toWebp = vi.mocked(images.toWebp)
 
 const token = () => jwt.sign({ sub: 'admin' }, 'test-jwt-secret', { expiresIn: '1h' })
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${token()}`)
@@ -26,6 +38,7 @@ const input = {
 beforeEach(() => {
   putObject.mockReset().mockResolvedValue()
   deleteObject.mockReset().mockResolvedValue()
+  toWebp.mockClear()
 })
 
 describe('admin products', () => {
@@ -219,5 +232,48 @@ describe('admin products', () => {
     expect(res.status).toBe(200)
     expect(res.body.product.photos).toHaveLength(1)
     expect(res.body.product.priceCents).toBe(3500)
+  })
+
+  it('accepts a photo a byte under the shared cap and refuses one at it', async () => {
+    // THE OTHER END OF `MAX_PHOTO_BYTES`, which the panel enforces in the browser so that nobody
+    // ever meets the failure below. Both sides read the constant now; until they did, multer's 8 MB
+    // and the web's were two numbers that happened to agree.
+    //
+    // BOTH DIRECTIONS, AND THE FIRST ONE IS WHAT MAKES THIS ABOUT THE NUMBER. Asserting only that
+    // an oversized file fails passes on any cap at all, however small — measured: lowering the
+    // constant to 4 MB left a one-sided version of this test green.
+    //
+    // THE LIMIT IS EXCLUSIVE, WHICH THIS TEST IS HOW WE KNOW. busboy refuses a file of exactly
+    // `fileSize`, so 8388607 is the largest that can be sent. The panel's own guard was `>` and
+    // therefore passed 8388608 through to the 500 below; it is `>=` now.
+    //
+    // `toWebp` IS THE PROBE RATHER THAN THE STATUS, because multer refusing a file and sharp
+    // failing to decode one are both a 500 from outside: `MulterError` is neither `AppError` nor
+    // `ZodError`, so `errorHandler` falls through to `INTERNAL`. Whether the route got as far as
+    // the conversion is the thing that separates them. The at-cap buffer is zeros, so its one call
+    // is stubbed — the real conversion is exercised by the webp test above.
+    const app = createApp()
+    const created = await auth(request(app).post('/api/admin/products').send(input))
+    const id = created.body.product.id
+
+    toWebp.mockImplementationOnce(async () => Buffer.from('webp'))
+    const underCap = await auth(
+      request(app).post(`/api/admin/products/${id}/photos`).attach('photo', Buffer.alloc(MAX_PHOTO_BYTES - 1), 'big.png'),
+    )
+    expect(underCap.status).toBe(201)
+    expect(toWebp).toHaveBeenCalledTimes(1)
+    expect(putObject).toHaveBeenCalledTimes(1)
+
+    const over = await auth(
+      request(app).post(`/api/admin/products/${id}/photos`).attach('photo', Buffer.alloc(MAX_PHOTO_BYTES), 'huge.png'),
+    )
+    // THE STATUS IS THE KNOWN DEFECT, PINNED AS IT IS RATHER THAN AS IT SHOULD BE. The likeliest
+    // upload failure there is arrives as "algo quebrou do meu lado". Answering 413 is an API change
+    // nobody has been given; this line goes red the day somebody makes it, so the panel cannot be
+    // left behind.
+    expect(over.status).toBe(500)
+    expect(toWebp).toHaveBeenCalledTimes(1)
+    expect(putObject).toHaveBeenCalledTimes(1)
+    expect((await Product.findById(id))!.photos).toHaveLength(1)
   })
 })

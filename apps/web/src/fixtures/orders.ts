@@ -62,6 +62,12 @@ export const paidOrder: AdminOrder = deepFreeze({
   id: 'o-2',
   orderNumber: 411,
   status: 'paid',
+  // ITS OWN BUYER, like every other order below. It used to inherit `pendingOrder`'s, and the
+  // buyer's name is what the list prints as a row and the detail pane prints as its `<h2>` and its
+  // region name — so a lookup that answered with the order NEXT TO this one rendered the same nine
+  // characters and `TheListAndTheDetailAgree` could not tell. `fixtures.test.ts` pins the
+  // distinctness now, so a later fixture cannot collapse it again.
+  buyer: { name: 'Cecília Andrade', email: 'cecilia@example.com', phone: '+55 31 98888-4412' },
   createdAt: '2026-09-03T09:30:00.000Z',
   paidAt: '2026-09-04T08:00:00.000Z',
   shippingMethod: 'sedex',

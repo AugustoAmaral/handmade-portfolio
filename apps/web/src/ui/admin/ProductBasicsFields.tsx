@@ -1,4 +1,4 @@
-import { type FieldErrors, type PublicProduct, formatPrice } from '@shop/shared'
+import { MIN_PRICE_CENTS, type FieldErrors, type PublicProduct, formatPrice } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { FieldLabel, Select, TextInput } from '../primitives'
 import { useFieldError } from '../shop/CheckoutSection'
@@ -40,16 +40,6 @@ export interface ProductBasicsFieldsProps {
    * generic the story's mocks cannot express, and the container's job is a single assignment. */
   onChange(values: ProductBasicsValues): void
 }
-
-/**
- * `productInputSchema` is `priceCents: z.number().int().min(100)`, and this is the second copy of
- * that 100. It is a CHECKED copy: `ProductBasicsFields.stories.tsx` parses `MIN_PRICE_CENTS` and
- * `MIN_PRICE_CENTS - 1` through the schema itself, so moving the floor upstream reddens a story
- * here instead of leaving the hint quietly lying about the minimum. The alternative — exporting
- * the number from `@shop/shared` beside the schema — is the better home and is a change to a
- * package this task may not touch.
- */
-export const MIN_PRICE_CENTS = 100
 
 /**
  * One amount, one optional separator, at most two decimals. Both separators are accepted because

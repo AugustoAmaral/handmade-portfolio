@@ -1,4 +1,4 @@
-import { type FieldErrors, fieldErrorsFromIssues, productInputSchema } from '@shop/shared'
+import { MAX_SPECS, type FieldErrors, fieldErrorsFromIssues, productInputSchema } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 import { expect, fn, userEvent } from 'storybook/test'
@@ -8,7 +8,6 @@ import { basicsFromProduct, centsFromReais, stockFrom } from './ProductBasicsFie
 import { localizedFromProduct } from './ProductLocalizedFields'
 import {
   EMPTY_SPEC,
-  MAX_SPECS,
   type SpecDraft,
   SpecsEditor,
   isBlankSpec,
@@ -270,9 +269,10 @@ export const KeepsErrorsOnTheRowTheyBelongTo: Story = {
  * `aria-describedby` either. Letting the add button fire and letting the schema refuse the whole
  * product would report a twelve-row cap as a save that failed.
  *
- * `MAX_SPECS` IS A SECOND COPY OF THE SCHEMA'S 12 AND IS CHECKED, the way `MIN_PRICE_CENTS` is:
- * the two parses below run the boundary through `productInputSchema` itself, so moving the cap
- * upstream reddens this story instead of leaving the sentence quietly lying about the limit.
+ * `MAX_SPECS` IS THE SCHEMA'S OWN CAP, read from `@shop/shared` by both the schema and this
+ * editor. The two parses below still run the boundary through `productInputSchema` itself, which
+ * is what keeps the sentence beside the button from drifting away from what a save would accept —
+ * a shared constant makes the numbers equal, not the message true.
  */
 export const StopsAtTwelveRows: Story = {
   args: { values: specsFromProduct(productWithMaxSpecs) },

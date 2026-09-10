@@ -1,4 +1,4 @@
-import { ORDER_STATUSES, canTransition, type OrderStatus } from '@shop/shared'
+import { MAX_TRACKING_CODE, ORDER_STATUSES, canTransition, type OrderStatus } from '@shop/shared'
 import { Router } from 'express'
 import { z } from 'zod'
 import { AppError } from '../../errors.js'
@@ -9,7 +9,7 @@ import { Order, toAdminOrder } from '../../models/order.js'
 const listQuerySchema = z.object({ status: z.enum([...ORDER_STATUSES, 'all'] as const).optional() })
 const patchSchema = z.object({
   status: z.literal('shipped'),
-  trackingCode: z.string().trim().min(1).max(60).optional(),
+  trackingCode: z.string().trim().min(1).max(MAX_TRACKING_CODE).optional(),
 })
 
 export const adminOrdersRouter = Router()

@@ -1,3 +1,4 @@
+import { SHOP_NAME } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fn, userEvent } from 'storybook/test'
 import { ShopHeader } from './ShopHeader'
@@ -26,6 +27,23 @@ export const BagButtonNamesItsCount: Story = {
   args: { cartCount: 3 },
   play: async ({ canvas }) => {
     await expect(canvas.getByRole('button', { name: /sacola/i }).textContent).toBe('Sacola (3)')
+  },
+}
+
+/**
+ * THE BRAND, AND NOTHING ASSERTED IT UNTIL THE SWEEP. `SHOP_NAME` was a private constant here and
+ * another one in `AdminHeader`; the two bars could have drifted apart for a whole PR without
+ * anything going red, because no test or story read either rendered name. They now read one
+ * constant from `@shop/shared` and each bar says so.
+ *
+ * The link wraps the NAME ALONE: with `est. 2026` inside it the home link would announce itself as
+ * "My Handmade Portfolio est. 2026", so the exact-name query is the assertion and not a formality.
+ */
+export const TheBrandIsTheHomeLink: Story = {
+  play: async ({ canvas }) => {
+    const brand = canvas.getByRole('link', { name: SHOP_NAME })
+    await expect(brand).toHaveAttribute('href', '/')
+    await expect(canvas.getByText('est. 2026')).toBeInTheDocument()
   },
 }
 

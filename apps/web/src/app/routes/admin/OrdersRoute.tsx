@@ -1,18 +1,14 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router'
+import type { AdminOrderFilter } from '@shop/shared'
 import type { DispatchError } from '../../../ui/admin'
-import { type AdminOrderFilter, AdminOrdersPage, LoadingPage } from '../../../ui/pages'
+import { AdminOrdersPage, LoadingPage } from '../../../ui/pages'
 import { ApiError } from '../../api/client'
 import { useAdminOrders, useMarkShipped } from '../../api/queries'
 import { useAdmin } from '../../AdminShellContainer'
 
 /**
  * The orders screen.
- *
- * `AdminOrderFilter` COMES FROM THE PAGE, not from `queries.ts`, which declares an identical union
- * a container is also allowed to import. Two copies exist and this task may not close them — the
- * type belongs in `@shop/shared` beside `ORDER_STATUSES`, which is Task 9's sweep — so the rule
- * here is simply not to make a third.
  *
  * THE FILTER IS STATE AND THE SELECTION IS THE URL, which is the split `AdminOrdersPage` argues
  * for: `?order=` is worth linking to and worth going back to, while a filter in the URL would have
@@ -52,7 +48,7 @@ export function OrdersRoute() {
     setDispatchError(undefined)
   }
 
-  if (isPending) return <LoadingPage />
+  if (isPending) return <LoadingPage surface="admin" />
 
   return (
     <AdminOrdersPage

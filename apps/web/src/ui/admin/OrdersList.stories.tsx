@@ -228,8 +228,15 @@ function surfaceOfClass(className: string, host: Element): Rgba {
  * THE HOVER SURFACE IS PAINTED RATHER THAN ENTERED, and that is a limitation worth stating: a
  * synthetic pointer event does not put Chromium into `:hover`, so no story on this branch can read
  * a hover style off `getComputedStyle`. What is measured here is the real declared colour and the
- * real composited opacity against the real `paper-2`; what is NOT measured is that the row still
- * carries the rule that reaches it.
+ * real composited opacity against the real `paper-2`; what is NOT measured is that the tint is what
+ * the browser would actually paint on hover.
+ *
+ * THE ROW STILL CARRYING THE RULE *is* measured now, by reading the stylesheet rather than the
+ * element. It is the weakest assertion in this file and it is here because the alternative was
+ * nothing at all: deleting `hover:bg-paper-2` from `OrdersList` left every ratio above green, since
+ * they are computed from a probe this story paints itself. Presence of the class plus existence of
+ * a `:hover` rule that names it is what a browser needs; whether the pointer ever reaches it is
+ * still not something this harness can say.
  */
 export const MeasuresItsMutedLineAgainstBothSurfaces: Story = {
   play: async ({ canvas }) => {
@@ -249,5 +256,25 @@ export const MeasuresItsMutedLineAgainstBothSurfaces: Story = {
     // The hover tint really is darker than the ground, so the line above is the harder of the two
     // and not an easier one wearing the same number.
     await expect(contrast(painted, hovered)).toBeLessThan(measure(code, 'color'))
+
+    // The class is on the row, and the stylesheet really has a `:hover` rule for it — Tailwind
+    // compiles an unknown utility to nothing at all, so the attribute alone would be satisfied by
+    // a name that styles nothing.
+    await expect(row.classList.contains('hover:bg-paper-2')).toBe(true)
+    // Recursive, because Tailwind 4 emits its utilities inside `@layer` blocks and the top level of
+    // a sheet is therefore a list of containers rather than of rules.
+    const flatten = (rules: CSSRuleList): CSSRule[] =>
+      [...rules].flatMap((rule) => [rule, ...('cssRules' in rule ? flatten((rule as CSSGroupingRule).cssRules) : [])])
+    const selectors = [...document.styleSheets]
+      .flatMap((sheet) => {
+        try {
+          return flatten(sheet.cssRules)
+        } catch {
+          return []
+        }
+      })
+      .filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule)
+      .map((rule) => rule.selectorText)
+    await expect(selectors.some((selector) => selector.includes('bg-paper-2') && selector.includes(':hover'))).toBe(true)
   },
 }

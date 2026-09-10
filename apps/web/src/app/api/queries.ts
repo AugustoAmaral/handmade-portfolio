@@ -1,7 +1,7 @@
 import type {
   AdminOrder,
+  AdminOrderFilter,
   CheckoutRequest,
-  OrderStatus,
   ProductUpdateInput,
   PublicOrder,
   PublicProduct,
@@ -130,14 +130,6 @@ export function useAdminProducts() {
     queryFn: async () => (await api<{ products: PublicProduct[] }>('/api/admin/products')).products,
   })
 }
-
-/**
- * Three filters, not two: a named status, `all`, and NOTHING — which the API reads as its own
- * default, every status except `expired`. Absent is therefore not a synonym for `all`, and it has
- * to be absent rather than empty: `status` is parsed with `z.enum([...ORDER_STATUSES, 'all'])
- * .optional()`, so `?status=` is a 400 rather than a default.
- */
-export type AdminOrderFilter = OrderStatus | 'all'
 
 export function useAdminOrders(status?: AdminOrderFilter) {
   return useQuery({

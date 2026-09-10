@@ -50,7 +50,7 @@ export function ProductsRoute() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | undefined>(undefined)
   const [result, setResult] = useState<ProductDeleteResult | undefined>(undefined)
 
-  if (isPending) return <LoadingPage />
+  if (isPending) return <LoadingPage surface="admin" />
 
   return (
     <AdminProductsPage

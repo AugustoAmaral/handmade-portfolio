@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_SPECS, MIN_PRICE_CENTS } from './limits.js'
 
 export const localizedTextSchema = z.object({ pt: z.string().min(1), en: z.string().min(1) })
 export type LocalizedText = z.infer<typeof localizedTextSchema>
@@ -16,10 +17,10 @@ export const productInputSchema = z.object({
   name: localizedTextSchema,
   description: localizedTextSchema,
   subtitle: optionalLocalizedTextSchema.default({ pt: '', en: '' }),
-  priceCents: z.number().int().min(100),
+  priceCents: z.number().int().min(MIN_PRICE_CENTS),
   type: z.enum(['physical', 'digital']),
   stock: z.number().int().min(0).nullable(),
-  specs: z.array(specSchema).max(12).default([]),
+  specs: z.array(specSchema).max(MAX_SPECS).default([]),
   featured: z.boolean().default(false),
   active: z.boolean(),
 })

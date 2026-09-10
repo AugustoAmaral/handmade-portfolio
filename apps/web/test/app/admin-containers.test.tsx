@@ -386,6 +386,14 @@ describe('ProductsRoute', () => {
     expect(await screen.findByText('Carregando…')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).toBeNull()
 
+    // AND IT ASKS FOR THE PANEL'S GUTTER, which is the half no story can hold. `LoadingPage` is
+    // shared with the shop and the two do not have one gutter: 64px against 40px at the widest
+    // viewport, so the wrong one makes the screen step sideways as the table arrives. Its own story
+    // measures that the utility resolves to the narrower padding; only a container test can say the
+    // container asked for it. The class rather than the computed value, because jsdom compiles no
+    // CSS — the two assertions are complementary and neither is sufficient.
+    expect(screen.getByRole('status')).toHaveClass('px-gutter-admin')
+
     held.settle(catalogue())
     expect(await screen.findByRole('rowheader', { name: /Carta escrita à mão/ })).toBeInTheDocument()
   })

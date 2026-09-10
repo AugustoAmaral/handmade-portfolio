@@ -1,4 +1,4 @@
-import { type FieldErrors, fieldErrorsFromIssues, productUpdateSchema } from '@shop/shared'
+import { MAX_PHOTO_BYTES, type FieldErrors, fieldErrorsFromIssues, productUpdateSchema } from '@shop/shared'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 import { expect, fn, userEvent } from 'storybook/test'
@@ -7,7 +7,6 @@ import { measure, opacityOf } from '../../../.storybook/contrast'
 import { basicsFromProduct, centsFromReais, stockFrom } from './ProductBasicsFields'
 import { localizedFromProduct } from './ProductLocalizedFields'
 import {
-  MAX_PHOTO_BYTES,
   type PhotoDraft,
   PhotosEditor,
   photoProblem,
@@ -260,10 +259,10 @@ export const UploadsAFile: Story = {
  * component that waited for the response could only ever say "algo quebrou do meu lado" about a
  * photo that was simply too big. Fixing that is API-side and out of this PR.
  *
- * `MAX_PHOTO_BYTES` IS A SECOND COPY OF MULTER'S 8 MB and, unlike `MAX_SPECS` and
- * `MIN_PRICE_CENTS`, it is NOT a checked one: the limit lives in an Express route this project's
- * web tests cannot import. It is a sweep item — the number belongs beside the schemas in
- * `@shop/shared`, where both sides could read it.
+ * `MAX_PHOTO_BYTES` IS NOW ONE NUMBER AND NOT TWO. It used to be a copy of multer's 8 MB that no
+ * web test could check, because the limit lived in an Express route nothing here can import; it
+ * lives in `@shop/shared` and `routes/admin/products.ts` reads the same constant, so the browser
+ * refuses exactly what the server would. `admin-products.test.ts` holds the other end.
  *
  * THE WRONG-TYPE HALF IS MEASURED ON THE FUNCTION, NOT THROUGH THE INPUT, and that is the point
  * rather than a shortcut: `accept` filters the file out of the DOM path — user-event models the
@@ -273,13 +272,17 @@ export const UploadsAFile: Story = {
  */
 export const RefusesAFileTheApiWouldOnly500On: Story = {
   play: async ({ args, canvasElement }) => {
-    const big = fileOf('foto.jpg', 'image/jpeg', MAX_PHOTO_BYTES + 1)
+    const big = fileOf('foto.jpg', 'image/jpeg', MAX_PHOTO_BYTES)
     await userEvent.upload(pickerOf(canvasElement), big)
     await expect(args.onRejectFile).toHaveBeenLastCalledWith({ name: 'foto.jpg', problem: 'too_large' })
     await expect(args.onAddPhoto).not.toHaveBeenCalled()
 
     await expect(photoProblem(fileOf('a.jpg', 'image/jpeg', 10))).toBeUndefined()
-    await expect(photoProblem(fileOf('a.png', 'image/png', MAX_PHOTO_BYTES))).toBeUndefined()
+    // THE BOUNDARY IS EXCLUSIVE AND THE THREE SIZES SAY SO. multer refuses a file of exactly
+    // `MAX_PHOTO_BYTES`, measured against the real route, so the largest one that can be sent is a
+    // byte under it — this check used to be `>` and passed that one size straight into a 500.
+    await expect(photoProblem(fileOf('a.png', 'image/png', MAX_PHOTO_BYTES - 1))).toBeUndefined()
+    await expect(photoProblem(fileOf('a.png', 'image/png', MAX_PHOTO_BYTES))).toBe('too_large')
     await expect(photoProblem(fileOf('a.jpg', 'image/jpeg', MAX_PHOTO_BYTES + 1))).toBe('too_large')
     await expect(photoProblem(fileOf('a.pdf', 'application/pdf', 10))).toBe('wrong_type')
     // The one an iPhone actually hands over, and the one sharp cannot read without libheif.

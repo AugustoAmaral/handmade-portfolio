@@ -2,7 +2,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 import { expect, fn, userEvent } from 'storybook/test'
 import { shippedOrder } from '../../fixtures/orders'
-import { MAX_TRACKING_CODE, TrackingInlineForm } from './TrackingInlineForm'
+import { MAX_TRACKING_CODE } from '@shop/shared'
+import { TrackingInlineForm } from './TrackingInlineForm'
 
 const meta = {
   component: TrackingInlineForm,
@@ -105,9 +106,10 @@ export const ConfirmsABlankCode: Story = {
  * unactionable. The cap is on the control instead.
  *
  * Typed rather than read off the attribute: an attribute assertion says the number was written
- * down, and this says the browser is enforcing it. `MAX_TRACKING_CODE` is an UNCHECKABLE copy of
- * the API's 60 — the schema lives in an Express route no web test can import, the same position
- * `MAX_PHOTO_BYTES` is in — so the literal below is the only thing pinning the number itself.
+ * down, and this says the browser is enforcing it. `MAX_TRACKING_CODE` was a copy of the API's 60
+ * that nothing here could check; it is now the value `patchSchema` itself parses with, and
+ * `admin-orders.test.ts` asserts the boundary from the other side. The literal below is what makes
+ * changing that number a deliberate act rather than a quiet one.
  */
 export const StopsAtSixtyCharacters: Story = {
   args: { editing: true },
@@ -159,6 +161,21 @@ export const Pending: Story = {
     await expect(document.activeElement).toBe(field)
     await userEvent.keyboard('{Enter}')
     await expect(args.onConfirm).not.toHaveBeenCalled()
+  },
+}
+
+/**
+ * THE REGION IS THERE BEFORE THERE IS ANYTHING TO SAY, and it was NOT until the sweep. It used to
+ * be mounted only while `pending`, which is the version a screen reader never announces: a live
+ * region has to be on the page before its content changes, and one that appears already holding
+ * its message is silent. `Pending` above cannot see the difference — `getByRole('status')` finds
+ * the element either way — so this is the story that does.
+ */
+export const TheLiveRegionIsThereBeforeTheMessage: Story = {
+  args: { editing: true },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('status').textContent).toBe('')
+    await expect(canvas.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
   },
 }
 

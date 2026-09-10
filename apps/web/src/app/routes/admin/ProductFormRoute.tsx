@@ -145,7 +145,7 @@ export function ProductFormRoute() {
   }
 
   if (routedId !== seededFor && !needsSeed) {
-    if (isPending) return <LoadingPage />
+    if (isPending) return <LoadingPage surface="admin" />
     // ONE RULE, TWO RIGHT ANSWERS. The id may be missing because the list could not be fetched or
     // because the product is not in it, and this layer cannot tell those apart — the products table
     // can: it renders the failure with a retry when the same query is in error, and the catalogue

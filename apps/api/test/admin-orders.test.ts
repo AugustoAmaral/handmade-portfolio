@@ -1,3 +1,4 @@
+import { MAX_TRACKING_CODE } from '@shop/shared'
 import jwt from 'jsonwebtoken'
 import request from 'supertest'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -87,5 +88,23 @@ describe('admin orders', () => {
     const missing = await auth(request(createApp()).patch('/api/admin/orders/000000000000000000000000').send({ status: 'shipped' }))
     expect(missing.status).toBe(404)
     expect(missing.body.error.code).toBe('ORDER_NOT_FOUND')
+  })
+
+  it('accepts a tracking code at the shared cap and refuses one character more', async () => {
+    // THE OTHER END OF `MAX_TRACKING_CODE`. The panel mirrors it onto the field as `maxLength`, so
+    // the number is the browser's reason for refusing a keystroke AND the API's reason for refusing
+    // a request — and until both sides read one constant, nothing anywhere could tell they agreed.
+    // Both directions, because a cap asserted only from below passes on a schema with no cap at all.
+    const atCap = await auth(
+      request(createApp()).patch(`/api/admin/orders/${ids.paid}`).send({ status: 'shipped', trackingCode: 'B'.repeat(MAX_TRACKING_CODE) }),
+    )
+    expect(atCap.status).toBe(200)
+    expect(atCap.body.order.trackingCode).toHaveLength(MAX_TRACKING_CODE)
+
+    const over = await auth(
+      request(createApp()).patch(`/api/admin/orders/${ids.oversold}`).send({ status: 'shipped', trackingCode: 'B'.repeat(MAX_TRACKING_CODE + 1) }),
+    )
+    expect(over.status).toBe(400)
+    expect(over.body.error.fieldErrors.trackingCode).toBeTruthy()
   })
 })

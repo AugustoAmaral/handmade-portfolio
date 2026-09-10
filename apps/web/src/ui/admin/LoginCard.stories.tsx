@@ -138,21 +138,41 @@ export const TheErrorReplacesTheSessionNotice: Story = {
 }
 
 /**
- * The state the design does not draw, for the only async thing on this screen. The button says what
- * is happening and stops taking clicks — and stopping the click is what stops Enter too, because a
- * form whose default button is disabled has no implicit submission at all. Measured: an explicit
- * `if (pending) return` in the submit handler could be deleted with every story still green, so it
- * was, and `disabled` is now the only thing this assertion is holding.
+ * The state the design does not draw, for the only async thing on this screen. The button stops
+ * taking clicks — and stopping the click is what stops Enter too, because a form whose default
+ * button is disabled has no implicit submission at all. Measured: an explicit `if (pending) return`
+ * in the submit handler could be deleted with every story still green, so it was, and `disabled` is
+ * now the only thing that assertion is holding.
+ *
+ * THE BUTTON KEEPS ITS NAME AND THE REGION SAYS WHAT IS HAPPENING. This card used to swap the
+ * submit to `Entrando…`, which made it the branch's one control that renames itself for an event
+ * three others report in a live region. The three assertions below are the three halves of the
+ * repair, and the last one is the whole point: the region has to be on the page BEFORE the message
+ * arrives, so `Idle` asserts it there and empty.
  */
 export const Pending: Story = {
   args: { values: TYPED, pending: true },
   play: async ({ args, canvas }) => {
-    const button = canvas.getByRole('button', { name: 'Entrando…' })
+    const button = canvas.getByRole('button', { name: 'Entrar' })
     await expect(button).toBeDisabled()
-    await expect(canvas.queryByRole('button', { name: 'Entrar' })).toBeNull()
+    await expect(canvas.getByRole('status').textContent).toBe('Entrando…')
 
     await userEvent.type(canvas.getByLabelText('Senha'), '{Enter}')
     await expect(args.onSubmit).not.toHaveBeenCalled()
+  },
+}
+
+/**
+ * THE REGION EXISTS BEFORE THERE IS ANYTHING TO SAY, which is the assertion `Pending` cannot make
+ * on its own. A live region that mounts already holding its message is announced by nothing, so
+ * `getByRole('status')` finding the element while pending proves the markup and not the behaviour;
+ * only finding it EMPTY beforehand proves the reader would hear the change.
+ */
+export const TheLiveRegionIsThereBeforeTheMessage: Story = {
+  args: { values: TYPED },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('status').textContent).toBe('')
+    await expect(canvas.getByRole('button', { name: 'Entrar' })).toBeEnabled()
   },
 }
 

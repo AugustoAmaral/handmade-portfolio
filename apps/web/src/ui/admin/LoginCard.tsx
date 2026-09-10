@@ -133,9 +133,28 @@ export function LoginCard({ values, onChange, onSubmit, pending = false, error, 
           />
         </div>
       </div>
-      <PillButton type="submit" size="block" disabled={pending}>
-        {pending ? t('Signing in…') : t('Sign in')}
-      </PillButton>
+      {/*
+        THE BUTTON KEEPS ITS NAME WHILE PENDING. It used to swap to `Entrando…`, which made this the
+        one control on the branch that renamed itself for an event three others report in a live
+        region — and the swap is the worse of the two shapes for the same reasons `OrderSummaryPanel`
+        and `TrackingInlineForm` already give: a disabled button is dropped from the accessibility
+        tree by some screen readers, so the new label may never be read at all, and a control that
+        renames itself is one a voice-control user can no longer ask for by the name they saw.
+
+        The region is ALWAYS RENDERED, empty or not, which is the other half and the one this card
+        had none of. A live region that appears already holding its message announces nothing — the
+        same rule that keeps the session-ended notice above from being marked up as one. It is
+        wrapped with the button so the card's `gap-7` applies to the pair rather than opening a
+        28px hole under the button whenever nothing is in flight.
+      */}
+      <div>
+        <PillButton type="submit" size="block" disabled={pending}>
+          {t('Sign in')}
+        </PillButton>
+        <p role="status" className="font-mono mt-2 text-[11px] tracking-[0.04em] opacity-80 empty:mt-0">
+          {pending ? t('Signing in…') : ''}
+        </p>
+      </div>
     </form>
   )
 }

@@ -1,4 +1,4 @@
-import { type AdminOrder, formatOrderNumber } from '@shop/shared'
+import { SHOP_TIME_ZONE, type AdminOrder, formatOrderNumber } from '@shop/shared'
 import { useTranslation } from 'react-i18next'
 import { Price, StatusPill } from '../primitives'
 import { routes } from '../routes'
@@ -9,18 +9,6 @@ export interface OrdersListProps {
   selectedId?: string
   lang: 'pt' | 'en'
 }
-
-/**
- * THE PANEL SHOWS THE SHOP'S DAY, NOT THE READER'S. `createdAt`, `paidAt` and `shippedAt` are ISO
- * instants, so an unpinned formatter prints a different calendar day depending on where the browser
- * is — an order placed at 21:15 in Belo Horizonte would read as the next morning from Lisbon, and
- * "05 set" would mean two different things on two machines. Everything this panel dates happened in
- * one place, so it is dated there.
- *
- * It belongs beside `formatPrice` in `@shop/shared`, which is the same kind of fact about the same
- * shop, and it is here only because this task may not change that package. Sweep item.
- */
-export const SHOP_TIME_ZONE = 'America/Sao_Paulo'
 
 /**
  * The design's `DD mmm YYYY` — `05 set 2026`, lowercase, no trailing period — in both languages.

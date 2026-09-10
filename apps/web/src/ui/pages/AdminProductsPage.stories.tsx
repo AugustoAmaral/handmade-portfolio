@@ -70,9 +70,21 @@ export const Catalogue: Story = {
  * a condition, and this story is the only place either singular is ever rendered.
  */
 export const OneProduct: Story = {
-  args: { products: [letter] },
+  // AN INACTIVE PRODUCT, so the two numbers differ. With `letter` alone the shop has one product
+  // and one active product, and `1 cadastrado · 1 ativo` is what a summary reading `active` for
+  // both halves prints too — the coincidence this branch has been caught by four times. This
+  // renders the `1 registered` singular with `0 ativos` beside it.
+  args: { products: [inactiveGuide] },
   play: async ({ canvas }) => {
-    await expect(canvas.getByText(/cadastrado/).textContent).toBe('1 cadastrado · 1 ativo')
+    await expect(canvas.getByText(/cadastrado/).textContent).toBe('1 cadastrado · 0 ativos')
+  },
+}
+
+/** The OTHER singular, which needs two products to reach: one of them active and one not. */
+export const OneOfTwoIsActive: Story = {
+  args: { products: [letter, inactiveGuide] },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/cadastrados/).textContent).toBe('2 cadastrados · 1 ativo')
   },
 }
 
