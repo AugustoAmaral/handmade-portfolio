@@ -38,6 +38,10 @@ Almost every line below was **measured**, usually because something written from
 - **A react-query key test needs ONE cache, or it is testing nothing.** PR 4 Task 1 wrote "caches each filter separately" with two `render()` calls, each building its own `QueryClient` — so both hooks fetched regardless of what the key said, and the test proved nothing. Share one client across the renders, and prove it with a mutation that collapses the key to a constant.
 - **`res.json()` rejects on an empty body**, so a `204` endpoint only works because `client.ts` wraps the parse in `.catch(() => ({}))` — which was written for HTML 502s from a proxy and covers the success path by accident. `DELETE /api/admin/products/:id` is the only 204 on the branch. Do not remove that catch.
 
+- **axe has NO rule for non-text contrast.** PR 4 Task 2 measured an underline at 2.98:1 — under SC 1.4.11's 3:1 — and axe stayed completely silent. `color-contrast` covers text only. Every non-text indicator on this project (focus rings, selection markers, the gallery's selected-thumb ring, radio dots, rules and underlines) is guarded by an explicit measured assertion **or by nothing at all**.
+- **A component that paints its own opaque background does not need its story to paint one.** axe resolves the background from the element's ancestor chain and never reaches the story canvas. But the inverse is the trap: with a background painted behind it, **losing the component's own `bg-*` is invisible to axe** and only an explicit background assertion catches it.
+- **Chromium serialises Tailwind's `/40` opacity modifier as `oklab(…)`, not `rgb()`.** A contrast helper that parses `rgb()` throws or silently mis-parses. Convert, and make the parser throw loudly with the offending string rather than coercing.
+
 ## What is NOT here
 
 Anything true of one PR only: its branch name, its file map, its wipe list, the states its own screens need. Each plan declares those itself. If a rule below stops being true for a later PR, amend it here with the measurement — do not fork it into that plan, which is the failure this file exists to prevent.
