@@ -48,6 +48,12 @@ export function CheckoutSection({ id, tag, children }: { id: string; tag: string
  *
  * `wide` spans every column of whichever grid holds it. It is a layout fact about the field (a
  * street or a full name wants the row) and not about the grid, so it travels with the field.
+ *
+ * `autoComplete` is forwarded, not decided. WCAG 2.2 SC 1.3.5 wants the HTML autofill token for
+ * what the field collects, and only the caller knows that — this cell is used by three sections
+ * and two of them collect things the autofill list has no name for. It is deliberately OPTIONAL
+ * rather than required: a token invented to satisfy a type is exactly the failure the tokens are
+ * meant to prevent, since a wrong one makes a password manager fill the wrong box.
  */
 export function CheckoutField({
   id,
@@ -56,6 +62,7 @@ export function CheckoutField({
   onChange,
   error,
   type,
+  autoComplete,
   placeholder,
   wide = false,
 }: {
@@ -65,13 +72,22 @@ export function CheckoutField({
   onChange: (value: string) => void
   error?: string
   type?: 'text' | 'email' | 'tel'
+  autoComplete?: string
   placeholder?: string
   wide?: boolean
 }) {
   return (
     <div className={`flex flex-col gap-2 ${wide ? 'col-span-full' : ''}`}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <TextInput id={id} value={value} onChange={onChange} error={error} type={type} placeholder={placeholder} />
+      <TextInput
+        id={id}
+        value={value}
+        onChange={onChange}
+        error={error}
+        type={type}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+      />
     </div>
   )
 }

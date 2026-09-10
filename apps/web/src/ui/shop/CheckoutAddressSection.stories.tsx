@@ -149,3 +149,43 @@ export const InEnglish: Story = {
     await expect(canvas.queryByLabelText('Código postal')).toBeNull()
   },
 }
+
+/**
+ * SC 1.3.5, and the section where getting it wrong costs the most: a token that names the wrong
+ * thing does not fail silently, it makes a password manager fill the WRONG BOX — a shipping form
+ * that autofills the city into the street line is worse than one that autofills nothing.
+ *
+ * TWO FIELDS DELIBERATELY CARRY NO TOKEN, and their absence is asserted so a later drive-by cannot
+ * fill the gap with a guess. The HTML autofill list models a street address as `address-line1..3`
+ * plus administrative levels, and this form decomposes a Brazilian address FINER than that:
+ *
+ *   - `Número` has no purpose in the list at all. There is no house-number token; in the model the
+ *     number is part of line 1, which the `Rua / logradouro` box already claims. The nearest
+ *     unused token is `address-line2`, and taking it would put the complement's content in the
+ *     number box.
+ *   - `Bairro` is the tempting one, and the candidates are `address-level3` ("the third
+ *     administrative level") and `address-line3`. A bairro is not an administrative level of
+ *     anything — Brazil's are the state and the municipality, which are already level 1 and level
+ *     2 — and this form has no third address LINE either, since the complement is line 2. Both
+ *     would be a token chosen by elimination, which is the definition of a guess.
+ *
+ * `country` and not `country-name`: the box holds a code (`BR`, `FR`), `checkoutRules` compares it
+ * upper-cased against `BR`, and `shippingOptionsFor` looks it up in `INTL_ALLOWED_COUNTRIES` — so
+ * a browser filling in `Brasil` here would be filling in something the API rejects.
+ *
+ * The INTERNATIONAL shape needs no story of its own: it is this form minus number, complement and
+ * district, so every field it has is one of the six asserted below.
+ */
+export const AutofillTokens: Story = {
+  play: async ({ canvas }) => {
+    await expect(canvas.getByLabelText('País')).toHaveAttribute('autocomplete', 'country')
+    await expect(canvas.getByLabelText('CEP')).toHaveAttribute('autocomplete', 'postal-code')
+    await expect(canvas.getByLabelText('Rua / logradouro')).toHaveAttribute('autocomplete', 'address-line1')
+    await expect(canvas.getByLabelText('Complemento')).toHaveAttribute('autocomplete', 'address-line2')
+    await expect(canvas.getByLabelText('Cidade')).toHaveAttribute('autocomplete', 'address-level2')
+    await expect(canvas.getByLabelText('Estado')).toHaveAttribute('autocomplete', 'address-level1')
+
+    await expect(canvas.getByLabelText('Número')).not.toHaveAttribute('autocomplete')
+    await expect(canvas.getByLabelText('Bairro')).not.toHaveAttribute('autocomplete')
+  },
+}
